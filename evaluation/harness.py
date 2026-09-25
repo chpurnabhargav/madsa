@@ -190,6 +190,18 @@ def _headline_scores(state: WorkflowState) -> dict[str, Any]:
     return out
 
 
+def quota_exhausted(state: WorkflowState) -> bool:
+    """Whether a stage degraded because every provider had run out of allowance.
+
+    Such a run describes the free tier's daily limit, not the framework: its
+    degraded stages and fallback reports would enter the results as though the
+    framework had produced them. On a free tier a twenty-dataset sweep cannot
+    finish in one day, so the sweep must stop at the limit and resume later.
+    """
+    return any("Every configured provider refused" in w and "429" in w
+               for output in state.outputs.values() for w in output.warnings)
+
+
 def measure_run(state: WorkflowState) -> dict[str, Any]:
     """Extract the evaluation metrics from a completed run."""
     validation = state.findings("validation")
@@ -575,6 +587,14 @@ def run_evaluation(cases: list[EvalCase] | None = None,
                             "error": f"{type(exc).__name__}: {exc}",
                             "elapsed_s": round(time.time() - case_started, 2)})
             continue
+
+        if quota_exhausted(state):
+            # Nothing is written for this case, so `--resume` runs it again
+            # once the allowance has replenished, and the sweep stops here
+            # because every later case would fail the same way.
+            print(f"  {case.name}: every provider's quota is exhausted; stopping. "
+                  f"Resume later with --resume {output_dir}", flush=True)
+            break
 
         metrics = measure_run(state)
         metrics["status"] = "ok"

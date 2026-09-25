@@ -902,3 +902,20 @@ class TestScientificNotationIsReadWhole:
 
     def test_the_value_is_parsed_with_its_exponent(self):
         assert [v for _, v, _ in V.numbers_in("p = 6.12e-15")] == [6.12e-15]
+
+
+class TestTheSweepStopsAtTheQuota:
+    """A run degraded by exhausted provider quotas must not enter the results."""
+
+    def test_quota_exhaustion_is_recognised(self):
+        from evaluation.harness import quota_exhausted
+        from state import AgentOutput, WorkflowState
+
+        state = WorkflowState(df=_titanic_like(), dataset_name="t.csv")
+        state.record(AgentOutput(agent="report", status="degraded", warnings=[
+            "Model composition unavailable, assembled from findings. (Every "
+            "configured provider refused this request. gemini: Gemini returned 429: quota)"]))
+        assert quota_exhausted(state)
+
+        state.outputs["report"].warnings = ["Report uses causal language: ['due to']."]
+        assert not quota_exhausted(state)
