@@ -865,11 +865,15 @@ if __name__ == "__main__":
                              output_dir=args.output, resume=args.resume)
 
     s = payload["summary"]
-    print(f"\nCompleted {s['successful']}/{s['runs']} runs in "
+    print(f"\nCompleted {s.get('successful', 0)}/{s.get('runs', 0)} runs in "
           f"{payload['total_elapsed_s']}s")
-    print(f"Distinct plans: {s['distinct_plans']}  |  "
-          f"Checks satisfied: {s['checks_satisfied']}/{s['checks_total']}  |  "
-          f"Corrections: {s['total_corrections_applied']}")
+    # A sweep stopped at the quota before any case finished has no summary
+    # beyond the run count, so the detail is printed only when there is some.
+    if s.get("successful"):
+        print(f"Distinct plans: {s['distinct_plans']}  |  "
+              f"Checks satisfied: {s['checks_satisfied']}/{s['checks_total']}  |  "
+              f"Corrections: {s['total_corrections_applied']}  |  "
+              f"Delivered defects: {s.get('total_delivered_defects', 0)}")
     if (recall := s.get("quality_detection_recall")) is not None:
         print(f"Quality-detection recall: {recall:.0%}")
     print(f"\nResults written to {payload['output_dir']}")
