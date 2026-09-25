@@ -1268,6 +1268,19 @@ def ask_json(
         raise LLMError(f"The model backend could not be started: "
                        f"{type(exc).__name__}: {exc}") from exc
 
+    # Agents with an unusually long output get a larger allowance for the
+    # duration of this call; every backend reads the setting per request.
+    previous_budget = CONFIG.llm.max_tokens
+    CONFIG.llm.max_tokens = CONFIG.llm.max_tokens_for.get(agent, previous_budget)
+    try:
+        return _ask(backend, agent, system, user, required_keys, retries)
+    finally:
+        CONFIG.llm.max_tokens = previous_budget
+
+
+def _ask(backend: "Backend", agent: str, system: str, user: str,
+         required_keys: tuple[str, ...], retries: int) -> dict:
+    """The request-and-validate loop behind `ask_json`."""
     tagged_system = f"[agent:{agent}]\n{system}\n\n{UNTRUSTED_DATA_NOTICE}"
     prompt, last_error = user, ""
 

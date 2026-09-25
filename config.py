@@ -78,6 +78,12 @@ class LLMConfig:
     # prompt was even counted, and requests were refused as too large while the
     # real usage was far smaller. Observed agent outputs peak near 2,100 tokens.
     max_tokens: int = 2560
+    # The report is the one output far longer than the rest: a title, a
+    # summary and a section per stage, all in one JSON object. At 2,560 tokens
+    # it was cut off mid-object on a real Titanic run -- the reasoning models
+    # on the free tiers spend part of the allowance thinking first -- so all
+    # three attempts failed and the stage fell back to an assembled report.
+    max_tokens_for: dict[str, int] = field(default_factory=lambda: {"report": 6144})
     temperature: float = 0.0  # deterministic: the paper needs reproducible runs
     api_key: str | None = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY"))
 

@@ -859,3 +859,27 @@ class TestQuickRun:
         defaults = FrameworkConfig()
         assert CONFIG.stacking_max_rows == defaults.stacking_max_rows
         assert CONFIG.tune_models == defaults.tune_models
+
+
+class TestTheReportGetsALargerOutputAllowance:
+    """The report was cut off mid-JSON at the shared 2,560-token cap."""
+
+    def test_the_allowance_applies_to_the_report_call_only(self, monkeypatch):
+        seen = {}
+
+        class Recorder:
+            name, model = "groq", "m"
+
+            def complete(self, system, user):
+                seen[system.split("]")[0]] = CONFIG.llm.max_tokens
+                return llm.LLMResponse(text='{"a": 1}', backend="groq")
+
+        monkeypatch.setattr(llm, "get_backend", lambda: Recorder())
+        monkeypatch.setattr(CONFIG, "llm_cache_enabled", False)
+        before = CONFIG.llm.max_tokens
+        llm.ask_json("report", "s", "u")
+        llm.ask_json("eda", "s", "u")
+
+        assert seen["[agent:report"] == CONFIG.llm.max_tokens_for["report"] > before
+        assert seen["[agent:eda"] == before
+        assert CONFIG.llm.max_tokens == before
