@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from agents import llm
-from config import CONFIG
+from config import CONFIG, apply_quick_run
 from orchestrator.export import save_report
 from orchestrator.graph import run_workflow
 from tools import spark_engine
@@ -73,6 +73,10 @@ def main() -> int:
                              "one.")
     parser.add_argument("--fixed-pipeline", action="store_true",
                         help="Disable adaptive planning and run every stage.")
+    parser.add_argument("--quick", action="store_true",
+                        help="Skip the stacked ensemble and the hyperparameter "
+                             "search, for a demonstration. Every other model "
+                             "and check still runs.")
     parser.add_argument("--engine", choices=("pandas", "spark"),
                         help="Force an execution engine instead of choosing by data size.")
     parser.add_argument("--output", type=Path, help="Directory for the report files.")
@@ -87,6 +91,8 @@ def main() -> int:
         CONFIG.llm.backend = args.backend
     if args.fixed_pipeline:
         CONFIG.adaptive_planning = False
+    if args.quick:
+        apply_quick_run(True)
 
     # The execution engine is chosen from the file before anything is read, so
     # a dataset too large for memory is never loaded into it. Reading first and

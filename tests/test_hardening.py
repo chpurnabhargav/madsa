@@ -835,3 +835,27 @@ class TestProgressIsReportedAsTheRunAdvances:
 
         state = run_workflow(_titanic_like().head(120), "t.csv", on_progress=broken)
         assert state.findings("validation").get("verdict")
+
+
+class TestQuickRun:
+    """A demonstration shortcut that cannot silently change the answer."""
+
+    def test_it_switches_off_only_the_two_costliest_options(self, monkeypatch):
+        from config import FrameworkConfig, apply_quick_run
+
+        monkeypatch.setattr(CONFIG, "stacking_max_rows", 20_000)
+        monkeypatch.setattr(CONFIG, "tune_models", True)
+        permutations = CONFIG.permutation_tests
+
+        apply_quick_run(True)
+        assert CONFIG.stacking_max_rows == 0 and CONFIG.tune_models is False
+        # Fewer permutations would put p = 1/(n+1) above the threshold and
+        # make every dataset report no signal.
+        assert CONFIG.permutation_tests == permutations
+        assert 1 / (CONFIG.permutation_tests + 1) < CONFIG.permutation_alpha
+
+        # Turning it off restores the real defaults, not whatever was last set.
+        apply_quick_run(False)
+        defaults = FrameworkConfig()
+        assert CONFIG.stacking_max_rows == defaults.stacking_max_rows
+        assert CONFIG.tune_models == defaults.tune_models

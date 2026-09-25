@@ -27,7 +27,7 @@ import streamlit as st
 
 import verification
 from agents import llm
-from config import CONFIG
+from config import CONFIG, apply_quick_run
 from orchestrator import plain_language as pl
 from orchestrator.export import save_report, to_html, to_markdown
 from orchestrator.graph import CANONICAL_ORDER, run_workflow
@@ -473,6 +473,12 @@ with st.sidebar:
         "Report revisions allowed", 0, 3, CONFIG.max_validation_retries,
         help="How many times validation may send the report back to be rewritten "
              "with its objections in hand.")
+    quick = st.toggle(
+        "Quick run", value=False,
+        help="For live demonstrations. Skips the stacked ensemble and the "
+             "hyperparameter search, which take most of the time on a laptop. "
+             "Every remaining model is still cross-validated and tested against "
+             "shuffled labels, and every check still runs.")
 
     show('<div class="side-note">Every statistic is computed by a tool. The '
          'language model interprets the results, and a number it writes is '
@@ -533,6 +539,7 @@ if df is not None:
         CONFIG.llm.backend = backend
         CONFIG.adaptive_planning = adaptive
         CONFIG.max_validation_retries = retries
+        apply_quick_run(quick)
 
         slot = rail_slot or st.empty()
 
@@ -550,6 +557,7 @@ if df is not None:
 
         st.session_state["state"] = result
         st.session_state["state_key"] = current_key
+        st.session_state["state_quick"] = quick
         # A fresh pass lays the page out for results, without the landing
         # material this pass has already drawn above them.
         st.rerun()
@@ -565,6 +573,9 @@ verdict = validation.get("verdict") or "unknown"
 
 show(result_head(state))
 show(readouts(state))
+if st.session_state.get("state_quick"):
+    st.caption("Quick run: the stacked ensemble and the hyperparameter search "
+               "were skipped. The models compared are listed in the report.")
 
 if not CONFIG.verification_enabled:
     show(callout("The verification layer is switched off",

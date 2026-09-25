@@ -196,3 +196,27 @@ class FrameworkConfig:
 
 
 CONFIG = FrameworkConfig()
+
+
+def apply_quick_run(enabled: bool) -> None:
+    """Switch the two costliest modelling options off for a demonstration, or back on.
+
+    On a laptop the stacked ensemble and the hyperparameter search take most of
+    a run: the permutation test refits the winning model fifty times, and when
+    the winner is a stack each refit is itself a dozen fits. Measured on the
+    Titanic data on an idle laptop: modelling took 92.5s with both and 12.5s
+    without, for a macro F1 of 0.8255 against 0.8099 -- and both runs found
+    the signal significant (p = 0.0196).
+
+    The permutation count is deliberately left alone. With fifty permutations
+    the smallest reachable p-value is 1/51, just under the 0.02 threshold;
+    fewer would make significance unreachable, and every dataset would then be
+    reported as having no signal -- a faster demonstration of a wrong answer.
+
+    Restored from a fresh configuration rather than from `CONFIG`, which the
+    web interface re-reads on every interaction: a previous quick run would
+    otherwise become the new "default".
+    """
+    defaults = FrameworkConfig()
+    CONFIG.stacking_max_rows = 0 if enabled else defaults.stacking_max_rows
+    CONFIG.tune_models = False if enabled else defaults.tune_models

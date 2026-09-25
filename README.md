@@ -212,6 +212,7 @@ python run.py datasets/titanic.csv
 python run.py data.csv --goal "Which customers are likely to churn?"
 python run.py data.csv --backend anthropic
 python run.py data.csv --fixed-pipeline      # disable adaptive planning
+python run.py data.csv --quick               # demo speed: skip the stacked ensemble and tuning
 ```
 
 Reports are written to `reports/` as Markdown, self-contained HTML, and a JSON
