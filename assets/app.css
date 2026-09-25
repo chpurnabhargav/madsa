@@ -310,8 +310,10 @@ a { color: var(--stamp); }
 [data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] code {
   font-size: .82em; background: var(--tint); color: var(--ink); padding: .08rem .3rem; border-radius: 3px;
 }
+/* Every section heading already draws its own rule; the report's Markdown
+   rule after the opening card only doubled it. */
 [data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] hr {
-  border: none; border-top: 1px solid var(--rule); margin: 1.6rem 0;
+  display: none;
 }
 /* Tables in the booktabs manner of a journal: rules above, below and under
    the header, and nothing between columns. */
