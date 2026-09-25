@@ -883,3 +883,22 @@ class TestTheReportGetsALargerOutputAllowance:
         assert seen["[agent:report"] == CONFIG.llm.max_tokens_for["report"] > before
         assert seen["[agent:eda"] == before
         assert CONFIG.llm.max_tokens == before
+
+
+class TestScientificNotationIsReadWhole:
+    """"p = 6.12e-15" was read as 6.12 and flagged as an invented figure."""
+
+    def test_a_cited_small_p_value_is_supported(self):
+        allowed: set[str] = set()
+        V.collect_numbers({"p_value": 6.12e-15, "eta_squared": 0.0662}, allowed)
+        assert V.unsupported_numbers(
+            "Fare shows a moderate effect (eta-squared = 0.0662, p = 6.12e-15).",
+            allowed) == []
+
+    def test_an_invented_exponent_is_still_caught(self):
+        allowed: set[str] = set()
+        V.collect_numbers({"p_value": 6.12e-15}, allowed)
+        assert V.unsupported_numbers("p = 6.12e-9", allowed) == ["6.12e-9"]
+
+    def test_the_value_is_parsed_with_its_exponent(self):
+        assert [v for _, v, _ in V.numbers_in("p = 6.12e-15")] == [6.12e-15]

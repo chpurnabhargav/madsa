@@ -178,7 +178,12 @@ def asserts_any(text: str, terms: tuple[str, ...]) -> list[str]:
 # after a letter, digit or decimal point. Without that condition the range
 # "30-40" was read as 30 and -40, a date "2024-01-15" produced -1 and -15, and
 # each negative value was then reported as a figure nothing had computed.
-_NUMBER = re.compile(r"(?:(?<![\w.])-)?\d[\d,]*\.?\d*")
+#
+# Scientific notation is read whole. "p = 6.12e-15" was read as 6.12 -- a
+# figure nothing computed -- which on a real Titanic run turned a correctly
+# cited p-value into a critical issue, an "unreliable" verdict and two
+# revisions that could not fix it.
+_NUMBER = re.compile(r"(?:(?<![\w.])-)?\d[\d,]*\.?\d*(?:[eE][-+]?\d+)?")
 
 
 def numbers_in(text: str) -> list[tuple[str, float, float]]:
@@ -199,8 +204,12 @@ def numbers_in(text: str) -> list[tuple[str, float, float]]:
             value = float(cleaned)
         except ValueError:
             continue
-        decimals = len(cleaned.split(".")[1]) if "." in cleaned else 0
-        out.append((raw, value, 0.5 * (10 ** -decimals)))
+        # The precision written is the mantissa's, scaled by the exponent:
+        # "6.12e-15" claims two decimals of 1e-15.
+        mantissa, _, exponent = cleaned.lower().partition("e")
+        decimals = len(mantissa.split(".")[1]) if "." in mantissa else 0
+        power = int(exponent) if exponent else 0
+        out.append((raw, value, 0.5 * (10 ** (power - decimals))))
     return out
 
 
