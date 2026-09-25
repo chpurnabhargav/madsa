@@ -1,0 +1,23 @@
+# Streamlit paints its own widgets — buttons, sliders, selects, the sidebar —
+# before any stylesheet of ours runs, and several of them cannot be reached
+# with CSS at all. Setting the theme here means those widgets are built from
+# the same palette as everything else, rather than being overridden afterwards
+# and flickering on load.
+#
+# The palette is an audited lab notebook: navy ink on a cool paper ground, one
+# stamp blue for what the reader acts on and for what was verified, and a red
+# pen kept for what a check caught. assets/app.css holds the same tokens.
+
+[theme]
+base = "light"
+primaryColor = "#2346A0"              # stamp blue: actions, focus, verified
+backgroundColor = "#F4F6F8"           # the page: cool paper, not cream
+secondaryBackgroundColor = "#E9EDF2"  # sidebar, inputs, recessed surfaces
+textColor = "#0F1B2D"                 # navy ink
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

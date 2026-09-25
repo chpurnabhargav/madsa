@@ -1,0 +1,436 @@
+/* ------------------------------------------------------------------------- *
+ * Interface stylesheet: an audited lab notebook.
+ *
+ * Two typographic registers, on purpose. The interface is an instrument --
+ * IBM Plex Sans, condensed readouts, mono provenance labels. The report it
+ * produces is a paper, set in STIX Two, the face scientific publishers built
+ * for journals. The switch is the point: the tool hands you a document.
+ *
+ * Colour is spent on meaning only. Stamp blue marks what the reader acts on
+ * and what was verified; the red pen marks what a check caught; ochre marks a
+ * point to confirm. Everything structural is ink and rules.
+ *
+ * Kept in its own file rather than inside a Python string, so it can be read
+ * and diffed. app.py strips comments and blank lines before injecting it,
+ * because Streamlit's Markdown renderer ends an HTML block at a blank line.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --paper:        #F4F6F8;
+  --sheet:        #FFFFFF;
+  --tint:         #E9EDF2;
+  --rule:         #D8DEE6;
+  --rule-soft:    #E6EAF0;
+  --ink:          #0F1B2D;
+  --ink-2:        #46536A;
+  --ink-3:        #637085;
+  --stamp:        #2346A0;
+  --stamp-wash:   #E8EDF9;
+  --red-pen:      #B8321F;
+  --red-wash:     #FBEDEA;
+  --ochre:        #8A5F0E;
+  --ochre-wash:   #FBF3E2;
+  --verified:     #1E6B4B;
+  --verified-wash:#E7F3EC;
+  --ledger:       #F4F9F2;
+  --ledger-blue:  #C9DAF0;
+  --ledger-red:   #E3A7A0;
+
+  --f-ui:   "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-read: "IBM Plex Sans Condensed", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --f-doc:  "STIX Two Text", Cambria, Georgia, serif;
+
+  --r: 6px;
+  --lift: 0 1px 2px rgba(15, 27, 45, .05), 0 10px 28px -20px rgba(15, 27, 45, .35);
+}
+
+/* ---- Base ---------------------------------------------------------------- */
+
+html, body, .stApp { background: var(--paper); color: var(--ink); }
+
+body, .stApp,
+[data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"],
+[data-testid="stCaptionContainer"], [data-testid="stSidebar"],
+[data-testid="stExpander"] summary, [data-testid="stAlert"],
+[data-testid="stFileUploader"], [data-testid="stStatusWidget"],
+.stTabs [data-baseweb="tab"], .stButton button, .stDownloadButton button,
+[data-baseweb="select"], input, textarea {
+  font-family: var(--f-ui);
+}
+
+/* Streamlit draws its icons from a ligature font; the rules above must not
+   turn "keyboard_arrow_down" into visible text. */
+[data-testid="stIconMaterial"] { font-family: "Material Symbols Rounded" !important; }
+
+code, pre, kbd, [data-testid="stCode"] code { font-family: var(--f-data) !important; }
+
+header[data-testid="stHeader"] { background: transparent; }
+
+[data-testid="stMainBlockContainer"], .block-container {
+  max-width: 76rem; padding-top: 2.25rem; padding-bottom: 5rem;
+}
+
+::selection { background: var(--stamp-wash); color: var(--ink); }
+:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
+
+a { color: var(--stamp); }
+
+/* ---- Sidebar ------------------------------------------------------------- */
+
+[data-testid="stSidebar"] { background: var(--tint); border-right: 1px solid var(--rule); }
+.brand { padding: .15rem 0 .35rem; }
+.brand .mark {
+  font-family: var(--f-read); font-weight: 600; font-size: 1.45rem;
+  letter-spacing: .04em; color: var(--ink); line-height: 1;
+}
+.brand .tag { font-size: .8rem; color: var(--ink-2); margin-top: .35rem; }
+.side-head {
+  font-family: var(--f-read); font-size: .72rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+  margin: 1.35rem 0 .4rem; padding-top: .95rem; border-top: 1px solid var(--rule);
+}
+.side-note { font-size: .78rem; color: var(--ink-3); line-height: 1.5; margin-top: 1.5rem; }
+
+/* ---- Masthead ------------------------------------------------------------ */
+
+.eyebrow {
+  font-family: var(--f-data); font-size: .74rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--stamp);
+}
+.masthead { padding: 0 0 1.6rem; }
+.masthead .headline {
+  font-family: var(--f-read); font-weight: 600;
+  font-size: clamp(2rem, 3.6vw, 2.9rem); line-height: 1.06; letter-spacing: -.01em;
+  color: var(--ink); margin: .55rem 0 .85rem; max-width: 20em;
+}
+.masthead .lede { font-size: 1.02rem; line-height: 1.6; color: var(--ink-2); max-width: 44rem; }
+
+/* ---- The pipeline rail --------------------------------------------------- */
+
+.figure {
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r);
+  padding: 1.05rem 1.25rem 1rem; box-shadow: var(--lift); margin: 0 0 1.25rem;
+  container-type: inline-size;
+}
+.figure-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  flex-wrap: wrap; gap: .3rem 1.5rem;
+}
+.figure-head .t {
+  font-family: var(--f-read); font-size: .74rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+.figure-head .n { font-family: var(--f-data); font-size: .74rem; color: var(--ink-2); }
+
+/* The resets are forced: Streamlit's Markdown styles give every list and list
+   item an indent at a higher specificity, which pushed each station off its
+   grid line and broke the connector between them. */
+.rail {
+  list-style: none; margin: .95rem 0 0 !important; padding: 0 !important;
+  display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 0 .5rem;
+}
+.rail > li.station { position: relative; min-width: 0; margin: 0 !important; padding: 0 !important; }
+.station::after {
+  content: ""; position: absolute; top: 25px; left: 22px; right: -.5rem;
+  border-top: 1px solid var(--rule);
+}
+.station:last-child::after { display: none; }
+.station .num {
+  display: block; height: 14px; line-height: 14px;
+  font-family: var(--f-data); font-size: .68rem; color: var(--ink-3);
+}
+.station .node {
+  display: block; box-sizing: border-box; width: 14px; height: 14px; margin: 5px 0 9px;
+  border-radius: 50%; border: 2px solid var(--stamp); background: var(--sheet);
+  position: relative; z-index: 1;
+}
+.station .name {
+  display: block; font-family: var(--f-read); font-weight: 600; font-size: .93rem;
+  color: var(--ink); line-height: 1.2;
+}
+.station .meta {
+  display: block; font-size: .74rem; line-height: 1.38; color: var(--ink-2); margin-top: .2rem;
+}
+.station .guard {
+  display: block; font-family: var(--f-data); font-size: .66rem; color: var(--stamp);
+  margin-top: .4rem;
+}
+.station .guard.caught { color: var(--red-pen); }
+.station .guard.none { color: var(--ink-3); }
+
+.s-ok .node       { border-color: var(--verified); background: var(--verified); }
+.s-degraded .node { border-color: var(--ochre); background: var(--ochre-wash); }
+.s-failed .node   { border-color: var(--red-pen); background: var(--red-pen); }
+.s-skipped .node  { border-color: var(--ink-3); border-style: dashed; }
+.s-skipped .name, .s-skipped .meta { color: var(--ink-3); }
+.s-pending .node  { border-color: var(--rule); }
+.s-pending .name, .s-pending .meta { color: var(--ink-3); }
+/* The one moving thing on the page: the agent at work. */
+.s-running .node {
+  border-color: var(--stamp); background: var(--stamp-wash);
+  animation: at-work 1.4s ease-in-out infinite;
+}
+.s-running .meta { color: var(--stamp); }
+@keyframes at-work {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(35, 70, 160, .35); }
+  50%      { box-shadow: 0 0 0 6px rgba(35, 70, 160, 0); }
+}
+
+.layer {
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: .25rem 1rem;
+  margin-top: 1rem; padding-top: .55rem; border-top: 1px dashed #9FB1DC;
+  font-family: var(--f-data); font-size: .7rem; letter-spacing: .03em; color: var(--stamp);
+}
+.layer span:last-child { color: var(--ink-3); }
+
+/* ---- Dataset strip ------------------------------------------------------- */
+
+.dataset {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: .6rem 2.25rem;
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r);
+  padding: .9rem 1.2rem; margin: 0 0 .85rem;
+}
+.dataset .file { flex: 1 1 14rem; min-width: 0; }
+.dataset .file .v {
+  font-family: var(--f-data); font-size: 1rem; font-weight: 500; color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.fact .k, .dataset .file .k {
+  display: block; font-family: var(--f-read); font-size: .68rem; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
+}
+.fact .v {
+  display: block; font-family: var(--f-read); font-weight: 600; font-size: 1.3rem;
+  font-variant-numeric: tabular-nums; color: var(--ink); line-height: 1.2;
+}
+
+/* ---- Result header ------------------------------------------------------- */
+
+.result-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 1.25rem 2rem; margin: .5rem 0 1rem;
+}
+.answer { min-width: 0; }
+.answer .headline {
+  font-family: var(--f-read); font-weight: 600; font-size: clamp(1.45rem, 2.5vw, 2rem);
+  line-height: 1.16; color: var(--ink); margin: .4rem 0 .35rem;
+}
+.answer .meaning { font-size: .95rem; line-height: 1.55; color: var(--ink-2); max-width: 46rem; }
+
+.seal {
+  flex: 0 0 auto; min-width: 10rem; text-align: center; color: var(--ink-3);
+  padding: .5rem .9rem .55rem; border: 2px solid currentColor; border-radius: 4px;
+  outline: 1px solid currentColor; outline-offset: 3px; margin: .35rem .3rem 0 0;
+  background: var(--sheet);
+}
+.seal .k { font-family: var(--f-data); font-size: .62rem; letter-spacing: .16em; text-transform: uppercase; }
+.seal .v {
+  font-family: var(--f-read); font-weight: 600; font-size: 1.3rem;
+  letter-spacing: .08em; text-transform: uppercase; line-height: 1.25;
+}
+.seal .s { font-size: .72rem; line-height: 1.35; }
+.seal.sound          { color: var(--verified); }
+.seal.needs_revision { color: var(--ochre); }
+.seal.unreliable     { color: var(--red-pen); }
+
+/* ---- Readouts ------------------------------------------------------------ */
+
+.readouts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
+  gap: .75rem; margin: 0 0 1.1rem;
+}
+.readout {
+  background: var(--sheet); border: 1px solid var(--rule); border-top: 3px solid var(--rule);
+  border-radius: var(--r); padding: .8rem 1rem .85rem; min-width: 0;
+}
+.readout.t-focus { border-top-color: var(--stamp); }
+.readout.t-good  { border-top-color: var(--verified); }
+.readout.t-warn  { border-top-color: var(--ochre); }
+.readout.t-bad   { border-top-color: var(--red-pen); }
+.readout .k {
+  font-family: var(--f-read); font-size: .7rem; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
+}
+.readout .v {
+  font-family: var(--f-read); font-weight: 600; font-size: 1.7rem; line-height: 1.15;
+  margin-top: .3rem; color: var(--ink); font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.readout .s { font-size: .78rem; line-height: 1.4; color: var(--ink-2); margin-top: .25rem; }
+
+/* ---- Callouts ------------------------------------------------------------ */
+
+.callout {
+  background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--stamp);
+  border-radius: var(--r); padding: .8rem 1.1rem; margin: .25rem 0 1rem;
+}
+.callout.warn { border-left-color: var(--ochre); background: var(--ochre-wash); }
+.callout.bad  { border-left-color: var(--red-pen); background: var(--red-wash); }
+.callout .t { font-weight: 600; color: var(--ink); margin-bottom: .15rem; }
+.callout .d { font-size: .9rem; line-height: 1.55; color: var(--ink-2); max-width: 60rem; }
+
+/* ---- Tabs ---------------------------------------------------------------- */
+
+.stTabs [data-baseweb="tab-list"] { gap: 1.6rem; border-bottom: 1px solid var(--rule); }
+.stTabs [data-baseweb="tab"] { height: 2.8rem; padding: 0; background: transparent; }
+.stTabs [data-baseweb="tab"] p {
+  font-family: var(--f-read); font-weight: 600; font-size: .96rem; color: var(--ink-3);
+}
+.stTabs [aria-selected="true"] p { color: var(--ink); }
+.stTabs [data-baseweb="tab-highlight"] { background: var(--stamp); }
+
+/* ---- The report, typeset as a paper --------------------------------------
+ * Found through a marker element rather than tab position, which Streamlit's
+ * tab markup does not keep stable.
+ * ----------------------------------------------------------------------- */
+
+[data-baseweb="tab-panel"]:has(.report-marker) {
+  max-width: 52rem; background: var(--sheet); border: 1px solid var(--rule);
+  border-radius: 4px; box-shadow: var(--lift);
+  padding: 2.6rem clamp(1.1rem, 5vw, 3.75rem) 3rem; margin-top: 1.25rem;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] :is(p, li) {
+  font-family: var(--f-doc); font-size: 1.07rem; line-height: 1.62; color: #16202F;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] h1 {
+  font-family: var(--f-doc); font-weight: 600; font-size: 2.05rem; line-height: 1.2;
+  letter-spacing: -.005em; color: var(--ink); padding: 0 0 .45rem;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] h2 {
+  font-family: var(--f-read); font-weight: 600; font-size: .8rem; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--stamp);
+  margin: 2.3rem 0 .65rem; padding: 1.05rem 0 0; border-top: 1px solid var(--rule);
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] h3 {
+  font-family: var(--f-doc); font-style: italic; font-weight: 600; font-size: 1.15rem;
+  color: var(--ink); padding: .9rem 0 .25rem;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] strong { color: var(--ink); }
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] code {
+  font-size: .82em; background: var(--tint); color: var(--ink); padding: .08rem .3rem; border-radius: 3px;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] hr {
+  border: none; border-top: 1px solid var(--rule); margin: 1.6rem 0;
+}
+/* Tables in the booktabs manner of a journal: rules above, below and under
+   the header, and nothing between columns. */
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] table {
+  border-collapse: collapse; border-top: 1.5px solid var(--ink) !important;
+  border-bottom: 1.5px solid var(--ink) !important; font-family: var(--f-ui);
+  font-size: .84rem; margin: .6rem 0 1.1rem;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] :is(th, td) {
+  border: none !important; padding: .38rem .7rem; font-family: var(--f-ui);
+  font-variant-numeric: tabular-nums;
+}
+[data-baseweb="tab-panel"]:has(.report-marker) [data-testid="stMarkdownContainer"] th {
+  border-bottom: 1px solid var(--ink) !important; font-weight: 600; color: var(--ink);
+  background: transparent !important; text-align: left;
+}
+
+/* ---- Charts -------------------------------------------------------------- */
+
+.fig-label {
+  font-family: var(--f-data); font-size: .72rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--stamp); margin: 1.1rem 0 .35rem;
+}
+[data-testid="stPlotlyChart"] {
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r); padding: .4rem;
+}
+.fig-caption { font-size: .86rem; line-height: 1.55; color: var(--ink-2); margin: .5rem 0 .15rem; }
+.fig-why { font-size: .8rem; line-height: 1.5; color: var(--ink-3); font-style: italic; }
+
+/* ---- The verification ledger --------------------------------------------- */
+
+.ledger-wrap {
+  background: var(--ledger); border: 1px solid #D5E3D1; border-radius: 4px;
+  overflow-x: auto; box-shadow: var(--lift); margin: .4rem 0 1.4rem;
+}
+table.ledger { width: 100%; border-collapse: collapse; font-size: .86rem; }
+table.ledger th {
+  font-family: var(--f-read); font-size: .68rem; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); text-align: left;
+  padding: .75rem .9rem .5rem; border-bottom: 2px solid #A9C3E6; background: transparent;
+}
+table.ledger td {
+  padding: .62rem .9rem; border-bottom: 1px solid var(--ledger-blue); vertical-align: top;
+  color: var(--ink); border-left: none; border-right: none; border-top: none;
+}
+table.ledger :is(th, td):first-child {
+  border-right: 1px solid var(--ledger-red); white-space: nowrap; width: 7.5rem;
+}
+table.ledger td:first-child {
+  font-family: var(--f-data); font-size: .72rem; text-transform: uppercase; color: var(--ink-2);
+}
+.ledger .check b { display: block; font-weight: 600; }
+.ledger .check span { display: block; font-size: .8rem; line-height: 1.45; color: var(--ink-2); margin-top: .1rem; }
+.ledger .against { font-family: var(--f-data); font-size: .74rem; line-height: 1.5; color: var(--ink-2); }
+.tally {
+  display: inline-block; font-family: var(--f-data); font-size: .72rem; font-weight: 500;
+  padding: .1rem .45rem; border-radius: 3px; border: 1px solid; white-space: nowrap;
+}
+.tally.clear  { color: var(--verified); border-color: #B9DCC9; background: #F0F8F3; }
+.tally.caught { color: var(--red-pen); border-color: #EBC0B8; background: var(--red-wash); }
+.tally.off    { color: var(--ink-3); border-color: var(--rule); background: var(--sheet); }
+.ledger-foot {
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: .4rem 1rem;
+  padding: .6rem .9rem .7rem; font-family: var(--f-data); font-size: .72rem; color: var(--ink-2);
+}
+
+/* ---- The reviewer's objections -------------------------------------------- */
+
+.objection {
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r);
+  padding: .75rem 1rem .8rem; margin: 0 0 .6rem;
+}
+.objection .head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem;
+  font-family: var(--f-data); font-size: .7rem; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.sev { padding: .08rem .4rem; border-radius: 3px; font-weight: 500; }
+.sev.critical { background: var(--red-wash); color: var(--red-pen); }
+.sev.warning  { background: var(--ochre-wash); color: var(--ochre); }
+.sev.info     { background: var(--tint); color: var(--ink-2); }
+.objection .body { margin: .4rem 0 .15rem; line-height: 1.5; color: var(--ink); }
+.objection .fix { font-size: .86rem; line-height: 1.5; color: var(--ink-2); }
+.objection .ev {
+  font-family: var(--f-data); font-size: .72rem; line-height: 1.5; color: var(--ink-3);
+  margin-top: .25rem; overflow-wrap: anywhere;
+}
+
+/* ---- Streamlit surfaces --------------------------------------------------- */
+
+[data-testid="stExpander"] details {
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r);
+}
+[data-testid="stExpander"] summary p { font-weight: 500; }
+[data-testid="stDataFrame"] { border: 1px solid var(--rule); border-radius: var(--r); }
+.stButton button, .stDownloadButton button {
+  border-radius: var(--r); font-weight: 600; min-height: 2.75rem;
+}
+.section-label {
+  font-family: var(--f-read); font-size: .74rem; font-weight: 600; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3); margin: 1.6rem 0 .55rem;
+}
+
+/* ---- Small screens -------------------------------------------------------- */
+
+/* The rail answers to its own width, not the window's: with the sidebar open
+   a wide window still leaves it narrow, and nine stations need about 100px
+   each before their names start breaking mid-word. */
+@container (max-width: 940px) {
+  .rail { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 1.2rem; }
+  .station::after { display: none; }
+}
+@container (max-width: 480px) {
+  .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .result-head { flex-direction: column; }
+  .seal { align-self: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

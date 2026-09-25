@@ -1,0 +1,32 @@
+# Core data science
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.5
+scipy>=1.13
+statsmodels>=0.14        # variance inflation factors in the multivariate stage
+
+# Visualization
+plotly>=5.22
+kaleido>=0.2.1           # static image export for the report; no direct import
+
+# Agent orchestration
+langgraph>=0.2.28
+
+# Distributed execution. Optional: the framework falls back to pandas when this
+# or a Java runtime is absent, so it can be omitted on a machine without a JVM.
+pyspark>=4.0
+
+# Interface
+streamlit>=1.43
+
+# Utilities
+python-dotenv>=1.0
+
+# Language-model providers.
+# Only the Anthropic backend needs an SDK; Gemini, Groq and Grok are called over
+# plain HTTP from the standard library, and the mock backend needs nothing. This
+# is optional for the same reason: a run on any other backend never imports it.
+anthropic>=0.39
+
+# Testing
+pytest>=8.0
