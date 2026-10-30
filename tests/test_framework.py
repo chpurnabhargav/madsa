@@ -173,6 +173,23 @@ class TestTools:
         assert by_column[("missing_values", "Cabin")]["severity"] == "critical"
         assert by_column[("missing_values", "Age")]["severity"] == "warning"
 
+    @pytest.mark.parametrize("text_dtype", [object, "str"])
+    def test_text_checks_run_on_every_text_dtype(self, text_dtype):
+        # pandas 3 reads text into a `str` dtype rather than `object`; a check
+        # that tests for `object` alone silently skips every column read from a
+        # file.
+        n = 200
+        df = pd.DataFrame({
+            "sex": pd.Series([["male", "Male", " male", "female"][i % 4] for i in range(n)],
+                             dtype=text_dtype),
+            "score": pd.Series([str(i * 1.5) for i in range(n)], dtype=text_dtype),
+            "y": [i % 2 for i in range(n)],
+        })
+        kinds = {(i["kind"], i["column"])
+                 for i in assess_quality(df, profile_dataset(df))["issues"]}
+        assert ("inconsistent_categories", "sex") in kinds
+        assert ("numeric_stored_as_text", "score") in kinds
+
     def test_cleaning_logs_a_failure_rather_than_raising(self, titanic):
         _, log = apply_cleaning(titanic, [{"action": "impute_median", "column": "Ghost"}])
         assert log[0]["status"] == "failed"
