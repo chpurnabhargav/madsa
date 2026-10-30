@@ -1,0 +1,41 @@
+{
+  "dataset": "covertype",
+  "target": "Cover_Type",
+  "expected_target": "Cover_Type",
+  "target_correct": true,
+  "engine": "spark",
+  "elapsed_s": 855.9,
+  "status": "ok",
+  "rows_total": 581012,
+  "rows_modelled": 50000,
+  "task": "classification",
+  "best_model": "Extra Trees",
+  "tuned": false,
+  "scores": {
+    "accuracy": 0.8927,
+    "accuracy_std": 0.0035,
+    "f1_macro": 0.8411,
+    "f1_macro_std": 0.0094,
+    "precision_macro": 0.8841,
+    "precision_macro_std": 0.0082,
+    "recall_macro": 0.8109,
+    "recall_macro_std": 0.0098
+  },
+  "baseline_score": 0.1454,
+  "lift_over_baseline": 0.6957,
+  "p_value": null,
+  "beats_baseline": true,
+  "suspected_leakage": false,
+  "full_data_mllib": {
+    "status": "ok",
+    "selected_model": "Extra Trees",
+    "mllib_model": "RandomForestClassifier",
+    "rows_train": 465120,
+    "rows_test": 115892,
+    "features_used": 54,
+    "accuracy": 0.7886,
+    "f1_macro": 0.6526,
+    "elapsed_s": 43.4
+  },
+  "n_models_compared": 10
+}

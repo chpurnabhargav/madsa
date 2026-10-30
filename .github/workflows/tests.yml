@@ -1,0 +1,66 @@
+# Continuous integration: run the checks on every push, so a regression is
+# caught by the repository rather than by someone noticing later.
+#
+# Only the fast suite runs here. The slow tests exercise stacked ensembles and a
+# hyperparameter search, which take minutes of CPU that a hosted runner charges
+# for and that catch a narrower class of problem than the rest. They are run
+# locally before anything that matters, and on demand here.
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_slow:
+        description: "Also run the slow tests (ensembles and tuning)"
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff
+
+      # The lint gate the project uses locally: real errors only -- undefined
+      # names, unused imports, syntax -- not style.
+      - name: Lint
+        run: ruff check . --select F,E9
+
+      # The health check is the same one a user runs locally. Running it first
+      # means a broken environment reports itself in plain language instead of
+      # surfacing as a confusing test failure further down.
+      - name: Health check
+        run: python doctor.py
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: Tests
+        run: python -m pytest tests -q -m "not slow"
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: Slow tests
+        if: inputs.run_slow
+        run: python -m pytest tests -q -m slow
+        env:
+          PYTHONIOENCODING: utf-8
+
+      # Proves the claim the README makes: three commands from a clean checkout
+      # to a validated report, with no API key.
+      - name: End-to-end on a real dataset
+        run: python run.py datasets/heart_disease.csv --quiet
+        env:
+          PYTHONIOENCODING: utf-8

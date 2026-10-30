@@ -24,7 +24,7 @@ from datetime import datetime
 import numpy as np
 import sklearn
 import pandas as pd
-from sklearn.compose import ColumnTransformer
+from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.ensemble import (ExtraTreesClassifier, ExtraTreesRegressor,
                               HistGradientBoostingClassifier,
@@ -41,9 +41,60 @@ from sklearn.model_selection import (KFold, RandomizedSearchCV, StratifiedKFold,
                                      permutation_test_score, train_test_split)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from config import CONFIG
+
+# Gradient-boosting libraries are optional. They are the strongest general-purpose
+# learners on tabular data, and the published agents this project is compared with
+# report them, so leaving them out would hand those systems an advantage that has
+# nothing to do with the framework. A machine without them still gets the
+# scikit-learn families.
+try:
+    from xgboost import XGBClassifier, XGBRegressor
+except ImportError:  # pragma: no cover - depends on the environment
+    XGBClassifier = XGBRegressor = None
+try:
+    from lightgbm import LGBMClassifier, LGBMRegressor
+except ImportError:  # pragma: no cover - depends on the environment
+    LGBMClassifier = LGBMRegressor = None
+
+SVM_MAX_ROWS = 10_000  # kernel SVMs scale quadratically; beyond this they cost minutes per fold
+
+
+if XGBClassifier is not None:
+    from sklearn.preprocessing import LabelEncoder
+
+    class LabelEncodedXGBClassifier(XGBClassifier):
+        """XGBoost that accepts any class labels, as every other candidate does.
+
+        XGBoost insists on labels 0..k-1 and raises on `">50K"` or `"yes"`.
+        Encoding here, inside the estimator, keeps the original labels in
+        `classes_` and in predictions, so the scorers, the stacked ensemble and
+        the saved model all see the same labels as for the other families.
+        """
+
+        def fit(self, X, y, **kwargs):
+            self._encoder = LabelEncoder().fit(y)
+            # While xgboost's own fit runs, `classes_` must expose the encoded
+            # integer labels it validates against (it compares np.unique(y) with
+            # self.classes_); only afterwards are the original labels shown.
+            self._encoding = True
+            try:
+                return super().fit(X, self._encoder.transform(y), **kwargs)
+            finally:
+                self._encoding = False
+
+        def predict(self, X, **kwargs):
+            encoded = np.asarray(super().predict(X, **kwargs)).astype(int)
+            return self._encoder.inverse_transform(encoded)
+
+        @property
+        def classes_(self):
+            if getattr(self, "_encoding", False):
+                return np.arange(len(self._encoder.classes_))
+            return self._encoder.classes_
 
 # scikit-learn warns about convergence and undefined metrics on small folds;
 # these are reported through the results rather than printed as noise.
@@ -186,8 +237,28 @@ def _imbalance_ratio(y: Any) -> float:
     return float(counts.max() / counts.min())
 
 
+def _log_target_warranted(y: Any, task: str) -> bool:
+    """Whether a regression target is positive and right-skewed enough to model on a log scale.
+
+    Prices, incomes and counts have multiplicative error: being out by 10,000
+    matters for a 60,000 house and hardly at all for a 600,000 one. Fitted on the
+    raw scale, every model spends its capacity on the few most expensive rows.
+    The threshold is the one the feature stage already uses to decide that a
+    column is skewed enough for log1p, so the framework holds one opinion about
+    skew rather than two.
+    """
+    if task != "regression":
+        return False
+    from tools.features import SKEW_THRESHOLD
+
+    values = pd.to_numeric(pd.Series(y), errors="coerce").dropna()
+    return bool(len(values) > 2 and (values > 0).all()
+                and values.skew() > SKEW_THRESHOLD)
+
+
 def _candidate_models(task: str, n_rows: int, n_classes: int = 2,
-                      imbalance: float = 1.0) -> dict[str, Any]:
+                      imbalance: float = 1.0,
+                      log_target: bool = False) -> dict[str, Any]:
     """Baseline models spanning interpretability and flexibility.
 
     The set is deliberately small and untuned. The purpose is to establish what
@@ -255,19 +326,44 @@ def _candidate_models(task: str, n_rows: int, n_classes: int = 2,
             models["Extra Trees"] = ExtraTreesClassifier(
                 n_estimators=300, random_state=42, n_jobs=-1)
 
+        # A kernel SVM draws curved boundaries a linear model cannot, and on
+        # small, clean numeric data (breast cancer, wine) it is often the best
+        # family outright. It is left out on large data, where it is too slow.
+        if n_rows <= SVM_MAX_ROWS:
+            models["SVM (RBF)"] = SVC(probability=True, random_state=42)
+
+        # The boosting libraries scale to hundreds of thousands of rows, so
+        # unlike the exact scikit-learn boosting above they are offered at
+        # every size.
+        if XGBClassifier is not None:
+            models["XGBoost"] = LabelEncodedXGBClassifier(
+                n_estimators=300, learning_rate=0.05, max_depth=5,
+                subsample=0.9, colsample_bytree=0.9, tree_method="hist",
+                random_state=42, n_jobs=-1, verbosity=0)
+        if LGBMClassifier is not None:
+            models["LightGBM"] = LGBMClassifier(
+                n_estimators=300, learning_rate=0.05, num_leaves=31,
+                random_state=42, n_jobs=-1, verbose=-1)
+
         # A stacked ensemble learns how much to trust each family from held-out
         # predictions, rather than picking one outright. It is the only candidate
         # that can exceed every member, and measured on this project's datasets it
         # usually does -- but it fits every base model several times over, so it is
         # offered only where that cost is affordable.
         if n_rows <= CONFIG.stacking_max_rows:
+            members = [
+                ("rf", RandomForestClassifier(
+                    n_estimators=200, random_state=42, n_jobs=-1)),
+                ("hgb", HistGradientBoostingClassifier(random_state=42)),
+                ("lr", LogisticRegression(max_iter=1000, random_state=42)),
+            ]
+            # A stack gains most from members that err differently. The SVM's
+            # smooth boundary disagrees with the trees' axis-aligned splits
+            # more than another tree family would.
+            if n_rows <= SVM_MAX_ROWS:
+                members.append(("svm", SVC(probability=True, random_state=42)))
             models["Stacked Ensemble"] = StackingClassifier(
-                estimators=[
-                    ("rf", RandomForestClassifier(
-                        n_estimators=200, random_state=42, n_jobs=-1)),
-                    ("hgb", HistGradientBoostingClassifier(random_state=42)),
-                    ("lr", LogisticRegression(max_iter=1000, random_state=42)),
-                ],
+                estimators=members,
                 final_estimator=LogisticRegression(max_iter=1000, random_state=42),
                 cv=3, n_jobs=1)
         return models
@@ -287,6 +383,18 @@ def _candidate_models(task: str, n_rows: int, n_classes: int = 2,
         models["Extra Trees"] = ExtraTreesRegressor(
             n_estimators=300, random_state=42, n_jobs=-1)
 
+    if n_rows <= SVM_MAX_ROWS:
+        models["SVM (RBF)"] = SVR()
+    if XGBRegressor is not None:
+        models["XGBoost"] = XGBRegressor(
+            n_estimators=300, learning_rate=0.05, max_depth=5,
+            subsample=0.9, colsample_bytree=0.9, tree_method="hist",
+            random_state=42, n_jobs=-1, verbosity=0)
+    if LGBMRegressor is not None:
+        models["LightGBM"] = LGBMRegressor(
+            n_estimators=300, learning_rate=0.05, num_leaves=31,
+            random_state=42, n_jobs=-1, verbose=-1)
+
     if n_rows <= CONFIG.stacking_max_rows:
         models["Stacked Ensemble"] = StackingRegressor(
             estimators=[
@@ -296,6 +404,27 @@ def _candidate_models(task: str, n_rows: int, n_classes: int = 2,
                 ("ridge", Ridge(random_state=42)),
             ],
             final_estimator=Ridge(random_state=42), cv=3, n_jobs=1)
+
+    if log_target:
+        # Added beside the raw-scale models, never in place of them -- the same
+        # rule as the class-weighted variants. A log-scale fit trades accuracy on
+        # the most expensive rows for accuracy everywhere else, and whether that
+        # trade wins on this data is a measurement, made by the same
+        # cross-validation as every other candidate.
+        def logged(estimator):
+            return TransformedTargetRegressor(
+                regressor=estimator, func=np.log1p, inverse_func=np.expm1)
+
+        models["Ridge Regression (log target)"] = logged(Ridge(random_state=42))
+        models["Hist Gradient Boosting (log target)"] = logged(
+            HistGradientBoostingRegressor(random_state=42))
+        if LGBMRegressor is not None:
+            models["LightGBM (log target)"] = logged(LGBMRegressor(
+                n_estimators=300, learning_rate=0.05, num_leaves=31,
+                random_state=42, n_jobs=-1, verbose=-1))
+        elif n_rows <= 50_000:
+            models["Gradient Boosting (log target)"] = logged(
+                GradientBoostingRegressor(random_state=42))
     return models
 
 
@@ -348,7 +477,7 @@ def _prepare(df: pd.DataFrame, target: str, features: list[str],
 
 
 def _select_best(successful: list[dict[str, Any]], primary: str,
-                 task: str) -> tuple[dict[str, Any], dict[str, Any]]:
+                 task: str, folds: int = 5) -> tuple[dict[str, Any], dict[str, Any]]:
     """Choose the reported model, breaking statistical ties on a second metric.
 
     Taking the top of the sorted list treats every difference as real. It is
@@ -362,21 +491,32 @@ def _select_best(successful: list[dict[str, Any]], primary: str,
     Reporting it made the framework look weaker than the data warranted, for no
     gain in the metric it was chosen on.
 
-    So models within one standard deviation of the leader are treated as tied,
-    and the tie is broken on a secondary criterion: accuracy for classification,
+    So models within one standard error of the leader are treated as tied --
+    the one-standard-error rule (Hastie, Tibshirani & Friedman, ESL sec. 7.10)
+    -- and the tie is broken on a secondary criterion: accuracy for classification,
     since it is what a reader expects and the primary metric is unaffected; and
     for regression, the lower variance across folds, since among equally
     accurate models the more stable one generalises more predictably.
 
     The primary metric still decides who is in contention. This only chooses
     among models the primary metric cannot separate.
+
+    The tolerance is the standard error of the leader's mean (sd / sqrt(folds)),
+    not the fold standard deviation itself. The rule first used the standard
+    deviation, which is the spread of single folds, not the uncertainty in
+    their mean, and is sqrt(folds) times too wide. On Kaggle House Prices one
+    fold holds the dataset's known outlier houses, R-squared varied by 0.12
+    across folds, and every model down to a depth-6 Decision Tree -- 11.5
+    points of R-squared behind the leader -- counted as tied; the lower-variance
+    tie-break then chose it.
     """
     contenders = [r for r in successful if not r["is_baseline"]]
     if not contenders:
         return successful[0], {"rule": "no non-baseline model was available"}
 
     leader = contenders[0]
-    tolerance = float(leader["scores"].get(f"{primary}_std", 0.0) or 0.0)
+    spread = float(leader["scores"].get(f"{primary}_std", 0.0) or 0.0)
+    tolerance = spread / np.sqrt(max(int(folds), 1))
 
     tied = [r for r in contenders
             if leader["primary_score"] - r["primary_score"] <= tolerance]
@@ -384,7 +524,7 @@ def _select_best(successful: list[dict[str, Any]], primary: str,
         return leader, {
             "rule": "highest primary score",
             "primary_metric": primary,
-            "tied_within_1_std": [leader["model"]],
+            "tied_within_1_se": [leader["model"]],
         }
 
     if task == "classification":
@@ -400,7 +540,7 @@ def _select_best(successful: list[dict[str, Any]], primary: str,
         "rule": criterion,
         "primary_metric": primary,
         "tie_tolerance": round(tolerance, 4),
-        "tied_within_1_std": [r["model"] for r in tied],
+        "tied_within_1_se": [r["model"] for r in tied],
         "leader_on_primary": leader["model"],
         "selected": chosen["model"],
         "changed_selection": bool(chosen["model"] != leader["model"]),
@@ -443,7 +583,7 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
     pre = _preprocessor(numeric, categorical)
     results = []
 
-    for name, model in _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y)).items():
+    for name, model in _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task)).items():
         pipe = Pipeline([("prep", pre), ("model", model)])
         try:
             cv = cross_validate(pipe, X, y, cv=splitter, scoring=scoring,
@@ -471,7 +611,7 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
                 "results": results, **meta}
 
     successful.sort(key=lambda r: -r["primary_score"])
-    best, selection = _select_best(successful, primary, task)
+    best, selection = _select_best(successful, primary, task, folds)
 
     # Compare against the strongest baseline on the primary metric, not the
     # first one found; a weak baseline would flatter every model above it.
@@ -488,7 +628,7 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
     if CONFIG.tune_models and not best["is_baseline"]:
         tuning = tune_model(df, target, features, task, best["model"], random_state)
         if tuning and tuning.get("status") == "ok" and tuning["improved"]:
-            tuned_model = _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y))[best["model"]]
+            tuned_model = _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task))[best["model"]]
             tuned_model.set_params(**tuning["best_params"])
             tuned_pipe = Pipeline([("prep", _preprocessor(numeric, categorical)),
                                    ("model", tuned_model)])
@@ -565,7 +705,7 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
     # and can move it in or out of the tied group. Leaving the earlier choice
     # standing would report a selection made against numbers that no longer
     # hold.
-    best, selection = _select_best(successful, primary, task)
+    best, selection = _select_best(successful, primary, task, folds)
     selection["re_selected_after_tuning"] = bool(tuning and tuning.get("adopted"))
 
     lift = None
@@ -579,18 +719,23 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
     # shuffled targets measures the score distribution when no relationship
     # exists, which is the honest reference for whether signal was learned.
     permutation = None
-    if not best["is_baseline"]:
-        n_perm = CONFIG.permutation_tests
+    permutation_error = None
+    n_perm = CONFIG.permutation_tests
+    if not best["is_baseline"] and n_perm > 0:
         try:
-            model = _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y))[best["model"]]
+            model = _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task))[best["model"]]
             # The permutation test must exercise the model actually being
             # reported, so it uses the tuned parameters when those were adopted.
             if best.get("tuned") and best.get("params"):
                 model.set_params(**best["params"])
             pipe = Pipeline([("prep", pre), ("model", model)])
+            # A forest already spreads its trees over every core. Running the
+            # refits in parallel as well multiplies memory by the core count,
+            # which large fully grown forests do not survive on one machine.
+            outer_jobs = 1 if getattr(model, "n_jobs", None) == -1 else -1
             score, perm_scores, p_value = permutation_test_score(
                 pipe, X, y, cv=splitter, scoring=scoring[primary],
-                n_permutations=n_perm, random_state=random_state, n_jobs=-1)
+                n_permutations=n_perm, random_state=random_state, n_jobs=outer_jobs)
             permutation = {
                 "score": round(float(score), 4),
                 "null_mean": round(float(np.mean(perm_scores)), 4),
@@ -600,14 +745,17 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
                 "alpha": CONFIG.permutation_alpha,
                 "significant": bool(p_value < CONFIG.permutation_alpha),
             }
-        except Exception:
-            permutation = None  # cost or compatibility failure, not a run failure
+        except Exception as exc:
+            # A cost or compatibility failure, not a run failure -- but it is
+            # recorded, so the report says the test is missing rather than
+            # silently resting the signal claim on the baseline lift alone.
+            permutation_error = f"{type(exc).__name__}: {exc}"[:200]
 
     # What the chosen model does in practice, in counts rather than in a score.
     behaviour = None
     if not best["is_baseline"]:
         try:
-            model = _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y))[best["model"]]
+            model = _candidate_models(task, n_rows, y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task))[best["model"]]
             if best.get("tuned") and best.get("params"):
                 model.set_params(**best["params"])
             behaviour = _operating_behaviour(
@@ -651,6 +799,7 @@ def evaluate_models(df: pd.DataFrame, target: str, features: list[str],
         "best_model_tuned": bool(best.get("tuned")),
         "best_model_params": best.get("params"),
         "permutation_test": permutation,
+        "permutation_test_error": permutation_error,
         **meta,
     }
 
@@ -702,6 +851,12 @@ def _param_grid(task: str, model_name: str) -> dict[str, list[Any]]:
                 "model__max_features": ["sqrt", "log2", None],
                 "model__class_weight": [None, "balanced"],
             },
+            "SVM (RBF)": {
+                "model__C": [0.1, 0.5, 1.0, 5.0, 10.0, 50.0],
+                "model__gamma": ["scale", 0.001, 0.01, 0.1],
+                "model__class_weight": [None, "balanced"],
+            },
+            **_boosting_grids(),
         }
     else:
         grids = {
@@ -722,8 +877,37 @@ def _param_grid(task: str, model_name: str) -> dict[str, list[Any]]:
                 "model__max_depth": [2, 3, 4, 5],
                 "model__subsample": [0.7, 0.85, 1.0],
             },
+            "SVM (RBF)": {
+                "model__C": [0.1, 0.5, 1.0, 5.0, 10.0, 50.0],
+                "model__gamma": ["scale", 0.001, 0.01, 0.1],
+                "model__epsilon": [0.01, 0.1, 0.5],
+            },
+            **_boosting_grids(),
         }
     return grids.get(model_name, {})
+
+
+def _boosting_grids() -> dict[str, dict[str, list[Any]]]:
+    """Search ranges shared by the XGBoost and LightGBM classifiers and regressors."""
+    return {
+        "XGBoost": {
+            "model__n_estimators": [200, 400, 800],
+            "model__learning_rate": [0.02, 0.05, 0.1],
+            "model__max_depth": [3, 4, 5, 6, 8],
+            "model__subsample": [0.7, 0.85, 1.0],
+            "model__colsample_bytree": [0.6, 0.8, 1.0],
+            "model__min_child_weight": [1, 3, 5],
+        },
+        "LightGBM": {
+            "model__n_estimators": [200, 400, 800],
+            "model__learning_rate": [0.02, 0.05, 0.1],
+            "model__num_leaves": [15, 31, 63, 127],
+            "model__min_child_samples": [5, 10, 20, 40],
+            "model__subsample": [0.7, 0.85, 1.0],
+            "model__subsample_freq": [1],
+            "model__colsample_bytree": [0.6, 0.8, 1.0],
+        },
+    }
 
 
 def tune_model(df: pd.DataFrame, target: str, features: list[str], task: str,
@@ -771,7 +955,7 @@ def tune_model(df: pd.DataFrame, target: str, features: list[str], task: str,
         metric = "r2"
         inner = KFold(n_splits=3, shuffle=True, random_state=random_state)
 
-    base = _candidate_models(task, len(X_train), y.nunique(), _imbalance_ratio(y))
+    base = _candidate_models(task, len(X_train), y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task))
     if model_name not in base:
         return None
     pipe = Pipeline([("prep", pre), ("model", base[model_name])])
@@ -789,7 +973,8 @@ def tune_model(df: pd.DataFrame, target: str, features: list[str], task: str,
         # attributable to the parameters and nothing else.
         untuned = Pipeline([("prep", _preprocessor(numeric, categorical)),
                             ("model", _candidate_models(
-                                task, len(X_train), y.nunique())[model_name])])
+                                task, len(X_train), y.nunique(), _imbalance_ratio(y),
+                                _log_target_warranted(y, task))[model_name])])
         untuned.fit(X_train, y_train)
         scorer = get_scorer(metric)
         untuned_score = float(scorer(untuned, X_test, y_test))
@@ -846,7 +1031,7 @@ def fit_final_model(df: pd.DataFrame, target: str, features: list[str],
     if X is None:
         return None
 
-    candidates = _candidate_models(task, len(X), y.nunique(), _imbalance_ratio(y))
+    candidates = _candidate_models(task, len(X), y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task))
     if model_name not in candidates:
         return None
 
@@ -940,7 +1125,7 @@ def feature_importance(df: pd.DataFrame, target: str, features: list[str],
     except ValueError as exc:
         return {"status": "failed", "error": f"Could not split the data: {exc}"}
 
-    models = _candidate_models(task, len(X), y.nunique(), _imbalance_ratio(y))
+    models = _candidate_models(task, len(X), y.nunique(), _imbalance_ratio(y), _log_target_warranted(y, task))
     # An explicit None check: estimators define __len__, so `a or b` would
     # evaluate the estimator's truthiness and raise on an unfitted model.
     model = models[model_name] if model_name in models else models["Random Forest"]

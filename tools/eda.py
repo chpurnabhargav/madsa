@@ -414,4 +414,43 @@ def run_eda(df: pd.DataFrame, target: str | None = None,
         if skipped:
             results["group_differences_skipped"] = skipped
 
+    results["multiple_testing"] = correct_for_multiple_tests(results)
     return results
+
+
+#: The families of hypothesis tests run against the target in one analysis.
+TESTED_FAMILIES = ("target_correlations", "group_differences", "categorical_associations")
+
+
+def correct_for_multiple_tests(results: dict[str, Any], alpha: float = 0.05) -> dict[str, Any]:
+    """Apply a Benjamini-Hochberg correction across every target test run.
+
+    Up to thirty-five tests are run against the target in one analysis. At a 5%
+    threshold, one or two would come out "significant" on pure noise, and the
+    report would present them as findings. Benjamini-Hochberg keeps the
+    expected share of false discoveries among the reported ones at 5%. It is
+    used rather than Bonferroni because Bonferroni guards against even a single
+    false positive, which on this many tests would hide real effects.
+
+    Each entry keeps its raw `p_value` and gains `p_adjusted`; `significant`
+    is then decided on the adjusted value, and `significant_uncorrected`
+    records what the raw value alone would have said.
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    entries = [e for family in TESTED_FAMILIES for e in results.get(family) or []
+               if isinstance(e, dict) and np.isfinite(e.get("p_value", np.nan))]
+    summary = {"method": "Benjamini-Hochberg (false discovery rate 5%)",
+               "tests": len(entries), "lost_significance": 0}
+    if not entries:
+        return summary
+
+    rejected, adjusted, _, _ = multipletests([e["p_value"] for e in entries], alpha=alpha,
+                                             method="fdr_bh")
+    for entry, keep, p_adj in zip(entries, rejected, adjusted):
+        raw = bool(entry["p_value"] < alpha)
+        entry["p_adjusted"] = float(f"{p_adj:.4g}")
+        entry["significant_uncorrected"] = raw
+        entry["significant"] = bool(keep)
+        summary["lost_significance"] += int(raw and not keep)
+    return summary

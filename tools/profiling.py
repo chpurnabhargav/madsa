@@ -1,6 +1,7 @@
 """Dataset profiling: structure, types, distributions, and basic statistics."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -155,14 +156,51 @@ def profile_dataset(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def suggest_targets(profile: dict[str, Any]) -> list[dict[str, Any]]:
+def _one_hot_members(names: list[str]) -> set[str]:
+    """Columns in a family of three or more sharing a stem and a number.
+
+    A binary member is one level of a one-hot encoded categorical, or one
+    indicator among many like it (`pixel_3_0` in an 8x8 image).
+
+    `Wilderness_Area_0` .. `Wilderness_Area_3` encode one feature across four
+    columns, and each is fixed by its siblings: when three are 0, the fourth is
+    1. Offered as a target, such a column is predicted perfectly from inputs
+    that contain its own encoding -- on Covertype the framework once modelled
+    `Wilderness_Area_0` at accuracy 1.00 instead of the stated `Cover_Type`.
+    """
+    stems: dict[str, list[str]] = {}
+    for name in names:
+        match = re.fullmatch(r"(.+?)_?(\d+)", name)
+        if match:
+            stems.setdefault(match.group(1), []).append(name)
+    return {n for group in stems.values() if len(group) >= 3 for n in group}
+
+
+def _named_in_goal(column: str, goal: str | None) -> bool:
+    """Whether a stated goal names this column, as written or with spaces."""
+    if not goal:
+        return False
+    text = goal.lower()
+    for form in {column.lower(), column.lower().replace("_", " ")}:
+        if len(form) >= 3 and re.search(rf"(?<![\w]){re.escape(form)}(?![\w])", text):
+            return True
+    return False
+
+
+def suggest_targets(profile: dict[str, Any],
+                    goal: str | None = None) -> list[dict[str, Any]]:
     """Propose plausible target columns and the task type each would imply.
 
     The orchestrator uses this to decide whether a modelling branch is worth
     planning at all, and the Model Recommendation Agent uses it as its starting
     point rather than guessing from column names alone.
+
+    A column the stated goal names outright ranks first: the person asking has
+    said what the target is, and a name heuristic must not overrule them. One
+    level of a one-hot group is never proposed (see `_one_hot_members`).
     """
     candidates = []
+    families = _one_hot_members([c["name"] for c in profile["columns"]])
     # Names that commonly denote an outcome. Short entries are matched exactly
     # rather than as substrings: matching "y" anywhere would score almost every
     # column, so "account_age_days" would outrank a column actually named as an
@@ -181,6 +219,14 @@ def suggest_targets(profile: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if col["missing_fraction"] > 0.2:
             continue
+        if col["unique"] < 2:  # a constant has nothing to predict
+            continue
+        # A binary member of a column family is an indicator feature. Only
+        # binary ones: `sales_2021`, `sales_2022` form a family too, and the
+        # latest year can be exactly what is being predicted.
+        if col["unique"] == 2 and col["name"] in families:
+            continue
+        named = _named_in_goal(col["name"], goal)
 
         if sem in ("categorical", "categorical_numeric", "boolean"):
             task = "classification"
@@ -207,6 +253,8 @@ def suggest_targets(profile: dict[str, Any]) -> list[dict[str, Any]]:
             elif col["unique"] <= 10:
                 score += 0.15
 
+        if named:
+            score += 2.0
         if score > 0:
             candidates.append(
                 {
@@ -214,7 +262,10 @@ def suggest_targets(profile: dict[str, Any]) -> list[dict[str, Any]]:
                     "task": task,
                     "classes": col["unique"] if task == "classification" else None,
                     "confidence": round(min(score, 1.0), 2),
+                    "named_in_goal": named,
+                    "_rank": score,
                 }
             )
 
-    return sorted(candidates, key=lambda c: c["confidence"], reverse=True)[:5]
+    candidates.sort(key=lambda c: c.pop("_rank"), reverse=True)
+    return candidates[:5]

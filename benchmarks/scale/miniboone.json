@@ -1,0 +1,43 @@
+{
+  "dataset": "miniboone",
+  "target": "signal",
+  "expected_target": "signal",
+  "target_correct": true,
+  "engine": "spark",
+  "elapsed_s": 832.0,
+  "status": "ok",
+  "rows_total": 130064,
+  "rows_modelled": 49831,
+  "task": "classification",
+  "best_model": "LightGBM",
+  "tuned": false,
+  "scores": {
+    "accuracy": 0.9385,
+    "accuracy_std": 0.0025,
+    "f1_macro": 0.9288,
+    "f1_macro_std": 0.003,
+    "precision_macro": 0.9264,
+    "precision_macro_std": 0.0025,
+    "recall_macro": 0.9313,
+    "recall_macro_std": 0.0037,
+    "roc_auc": 0.9828,
+    "roc_auc_std": 0.001
+  },
+  "baseline_score": 0.5091,
+  "lift_over_baseline": 0.4197,
+  "p_value": 0.0196,
+  "beats_baseline": true,
+  "suspected_leakage": false,
+  "full_data_mllib": {
+    "status": "ok",
+    "selected_model": "LightGBM",
+    "mllib_model": "GBTClassifier",
+    "rows_train": 104325,
+    "rows_test": 25739,
+    "features_used": 50,
+    "accuracy": 0.9275,
+    "f1_macro": 0.9093,
+    "elapsed_s": 40.0
+  },
+  "n_models_compared": 8
+}

@@ -20,10 +20,11 @@ from typing import Any
 import joblib
 
 from agents.base import Agent
-from config import MODELS_DIR
+from config import CONFIG, MODELS_DIR
 from agents.llm import (NULL_WORDS, LLMError, as_name, as_names, as_text,
                         ask_json)
 from state import AgentOutput, WorkflowState
+from tools import spark_engine
 from tools.modelling import evaluate_models, feature_importance, fit_final_model
 from verification import (hallucinated_columns, overridden_signal_claim,
                           unsupported_importance_claim)
@@ -209,6 +210,41 @@ class ModellingAgent(Agent):
             )
         if dropped := evaluation.get("rows_dropped_missing_target"):
             warnings.append(f"{dropped} rows were dropped for having no target value.")
+        # A cross-validated score this close to perfect is almost never skill on
+        # real data: the target is recoverable from the inputs -- a copy of it,
+        # its one-hot siblings, or a value recorded after the outcome. Reported
+        # as a result, it would be the most confident claim in the report and
+        # the least true.
+        suspected_leakage = bool((evaluation.get("best_score") or 0) >= 0.999
+                                 and not evaluation.get("best_is_baseline"))
+        if suspected_leakage:
+            top = [f["feature"] for f in (importance.get("importances") or [])[:3]
+                   if isinstance(f, dict) and "feature" in f]
+            warnings.append(
+                f"Near-perfect cross-validated {evaluation['primary_metric']} "
+                f"({evaluation['best_score']}). On real data this usually means "
+                f"'{target}' can be read off the inputs rather than predicted"
+                + (f"; check the most influential features first: {top}." if top else ".")
+            )
+
+        if evaluation.get("permutation_test_error"):
+            warnings.append(
+                "The permutation test could not be run "
+                f"({evaluation['permutation_test_error']}); whether the model beats "
+                "chance rests on the baseline comparison alone.")
+
+        # On a distributed run the scores above describe the in-memory sample.
+        # Training the same family on every row with Spark MLlib says whether
+        # the result holds at full scale; it confirms, and replaces nothing.
+        distributed = None
+        if state.spark_df is not None and CONFIG.distributed_validation:
+            try:
+                distributed = spark_engine.distributed_validation(
+                    state.spark_df, target, features, task, evaluation["best_model"],
+                    n_classes=int(df[target].nunique()))
+            except Exception as exc:  # the sample result stands on its own
+                distributed = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                warnings.append(f"Full-data validation on Spark failed: {exc}")
 
         # 2. Interpret.
         user_prompt = (
@@ -328,6 +364,8 @@ class ModellingAgent(Agent):
             "baseline_score": evaluation["baseline_score"],
             "lift_over_baseline": evaluation["lift_over_baseline"],
             "beats_baseline": beats,
+            "suspected_leakage": suspected_leakage,
+            "distributed_validation": distributed,
             "permutation_p_value": perm["p_value"] if perm else None,
             # Counts rather than a score: how many of each outcome the model
             # actually finds, and how often it raises a false alarm. Computed

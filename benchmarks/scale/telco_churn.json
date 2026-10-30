@@ -1,0 +1,33 @@
+{
+  "dataset": "telco_churn",
+  "target": "CustomerChurned",
+  "expected_target": "CustomerChurned",
+  "target_correct": true,
+  "engine": "pandas",
+  "elapsed_s": 192.2,
+  "status": "ok",
+  "rows_total": 5000,
+  "rows_modelled": 5000,
+  "task": "classification",
+  "best_model": "LightGBM",
+  "tuned": false,
+  "scores": {
+    "accuracy": 0.9618,
+    "accuracy_std": 0.0049,
+    "f1_macro": 0.9148,
+    "f1_macro_std": 0.0115,
+    "precision_macro": 0.9544,
+    "precision_macro_std": 0.0093,
+    "recall_macro": 0.8839,
+    "recall_macro_std": 0.0136,
+    "roc_auc": 0.9236,
+    "roc_auc_std": 0.014
+  },
+  "baseline_score": 0.5023,
+  "lift_over_baseline": 0.4125,
+  "p_value": 0.0196,
+  "beats_baseline": true,
+  "suspected_leakage": false,
+  "full_data_mllib": null,
+  "n_models_compared": 12
+}

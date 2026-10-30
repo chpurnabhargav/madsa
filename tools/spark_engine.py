@@ -79,6 +79,9 @@ def get_session() -> "SparkSession":
         .master(CONFIG.spark_master)
         .config("spark.sql.shuffle.partitions", str(CONFIG.spark_shuffle_partitions))
         .config("spark.ui.enabled", "false")
+        # The console progress bar redraws itself into every log and terminal
+        # the run writes to; the trace already records what each stage did.
+        .config("spark.ui.showConsoleProgress", "false")
         .config("spark.driver.memory", CONFIG.spark_driver_memory)
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .getOrCreate()
@@ -455,3 +458,149 @@ def to_pandas_sample(sdf: "SparkDataFrame", n: int) -> Any:
         return sdf.toPandas()
     fraction = min(1.0, (n / total) * 1.1)
     return sdf.sample(withReplacement=False, fraction=fraction, seed=42).limit(n).toPandas()
+
+
+# --------------------------------------------------------------------------- #
+# Distributed validation of the selected model
+# --------------------------------------------------------------------------- #
+
+#: scikit-learn families that are boosted ensembles; MLlib's counterpart is GBT.
+_BOOSTED = ("Gradient Boosting", "Hist Gradient Boosting", "XGBoost", "LightGBM")
+_LINEAR = ("Logistic Regression", "Linear Regression", "Ridge Regression")
+
+
+def _mllib_estimator(model_name: str, task: str, n_classes: int) -> tuple[str, Any]:
+    """The MLlib estimator standing in for the scikit-learn family selected.
+
+    The same family, not the same implementation: MLlib has no extra-trees,
+    stacking or RBF-kernel SVM, so those -- and anything unmatched -- are
+    represented by a random forest, the closest distributed ensemble. MLlib's
+    GBT is binary-only for classification, so a multi-class boosted winner is
+    also represented by a random forest. The name of the stand-in is reported.
+    """
+    from pyspark.ml.classification import (GBTClassifier, LogisticRegression,
+                                           RandomForestClassifier)
+    from pyspark.ml.regression import GBTRegressor, LinearRegression, RandomForestRegressor
+
+    family = model_name.replace(" (log target)", "").replace(" (balanced)", "")
+    forest_args = {"numTrees": CONFIG.spark_ml_trees, "maxDepth": CONFIG.spark_ml_depth,
+                   "seed": 42}
+    if task == "classification":
+        if family.startswith(_LINEAR):
+            return "LogisticRegression", LogisticRegression(maxIter=100)
+        if family.startswith(_BOOSTED) and n_classes == 2:
+            return "GBTClassifier", GBTClassifier(maxIter=50, maxDepth=5, seed=42)
+        return "RandomForestClassifier", RandomForestClassifier(**forest_args)
+    if family.startswith(_LINEAR):
+        return "LinearRegression", LinearRegression(
+            regParam=0.0 if family.startswith("Linear") else 1.0, elasticNetParam=0.0)
+    if family.startswith(_BOOSTED):
+        return "GBTRegressor", GBTRegressor(maxIter=50, maxDepth=5, seed=42)
+    return "RandomForestRegressor", RandomForestRegressor(**forest_args)
+
+
+def distributed_validation(sdf: "SparkDataFrame", target: str, features: list[str],
+                           task: str, model_name: str, n_classes: int = 2,
+                           test_fraction: float = 0.2) -> dict[str, Any]:
+    """Train the selected model family on every row with Spark MLlib, and score it.
+
+    scikit-learn fits on a bounded in-memory sample, so on a distributed run its
+    cross-validated score describes the sample. This answers the question that
+    leaves open -- does the result hold on the full dataset? -- by fitting the
+    same family across the cluster on a random 80% of *all* rows and scoring it
+    on the remaining 20%.
+
+    It confirms; it does not replace. The delivered model and the reported
+    scores stay scikit-learn's, so a result never depends on which engine ran.
+    Derived features exist only in the in-memory frame, so this sees the raw
+    columns; missing values are imputed inside the Spark pipeline.
+    """
+    import time
+
+    from pyspark.ml import Pipeline
+    from pyspark.ml.feature import Imputer, OneHotEncoder, StringIndexer, VectorAssembler
+
+    started = time.time()
+    dtypes = dict(sdf.dtypes)
+    feats = [f for f in features if f in dtypes and f != target]
+    numeric = [f for f in feats if _is_numeric(dtypes[f])]
+    # A categorical with thousands of levels is an identifier, not a feature;
+    # one-hot encoding it across the cluster would cost much and mean nothing.
+    categorical = []
+    candidates = [f for f in feats if f not in numeric]
+    if candidates:
+        counts = sdf.agg(*[F.approx_count_distinct(c).alias(c) for c in candidates]).first()
+        categorical = [c for c in candidates if counts[c] <= CONFIG.spark_ml_max_levels]
+    if not numeric and not categorical:
+        return {"status": "skipped", "reason": "no usable feature exists in the full data"}
+
+    # Columns are renamed to internal names first. MLlib's stages write
+    # columns called label, features, prediction and probability, and a
+    # dataset whose target is named "label" -- among the most common target
+    # names there is -- would collide with them and fail.
+    num_in = [f"n{i}" for i in range(len(numeric))]
+    cat_in = [f"c{i}" for i in range(len(categorical))]
+    # Categoricals and a class label are cast to strings: MLlib's indexer
+    # rejects boolean columns, and MiniBooNE's `signal` target is one.
+    label = F.col(target).cast("string") if task == "classification" else F.col(target)
+    data = sdf.select(*[F.col(c).cast("double").alias(a) for c, a in zip(numeric, num_in)],
+                      *[F.col(c).cast("string").alias(a) for c, a in zip(categorical, cat_in)],
+                      label.alias("y")).where(F.col("y").isNotNull())
+    numeric, categorical, target = num_in, cat_in, "y"
+
+    log_target = task == "regression" and "(log target)" in model_name
+    stages: list[Any] = []
+    if task == "classification":
+        stages.append(StringIndexer(inputCol=target, outputCol="label",
+                                    handleInvalid="skip"))
+    else:
+        label = F.col(target).cast("double")
+        data = data.withColumn("label", F.log1p(label) if log_target else label)
+
+    imputed = [f"{c}__imp" for c in numeric]
+    if numeric:
+        stages.append(Imputer(inputCols=numeric, outputCols=imputed, strategy="median"))
+    encoded = []
+    if categorical:
+        indexed = [f"{c}__idx" for c in categorical]
+        encoded = [f"{c}__ohe" for c in categorical]
+        stages.append(StringIndexer(inputCols=categorical, outputCols=indexed,
+                                    handleInvalid="keep"))
+        stages.append(OneHotEncoder(inputCols=indexed, outputCols=encoded,
+                                    handleInvalid="keep"))
+    stages.append(VectorAssembler(inputCols=imputed + encoded, outputCol="features",
+                                  handleInvalid="keep"))
+    stand_in, estimator = _mllib_estimator(model_name, task, n_classes)
+    stages.append(estimator)
+
+    train, test = data.randomSplit([1 - test_fraction, test_fraction], seed=42)
+    fitted = Pipeline(stages=stages).fit(train)
+    scored = fitted.transform(test)
+
+    result: dict[str, Any] = {"status": "ok", "selected_model": model_name,
+                              "mllib_model": stand_in, "rows_train": train.count(),
+                              "rows_test": test.count(), "features_used": len(feats)}
+    if task == "classification":
+        # Macro F1 from the confusion counts, so it is the same quantity the
+        # in-memory evaluation reports; MLlib's built-in "f1" is weighted.
+        cells = scored.groupBy("label", "prediction").count().collect()
+        labels = {r["label"] for r in cells} | {r["prediction"] for r in cells}
+        total = sum(r["count"] for r in cells)
+        correct = sum(r["count"] for r in cells if r["label"] == r["prediction"])
+        f1s = []
+        for k in labels:
+            tp = sum(r["count"] for r in cells if r["label"] == k and r["prediction"] == k)
+            fp = sum(r["count"] for r in cells if r["label"] != k and r["prediction"] == k)
+            fn = sum(r["count"] for r in cells if r["label"] == k and r["prediction"] != k)
+            f1s.append(2 * tp / (2 * tp + fp + fn) if tp else 0.0)
+        result.update({"accuracy": round(correct / total, 4),
+                       "f1_macro": round(float(np.mean(f1s)), 4)})
+    else:
+        pred = F.expm1("prediction") if log_target else F.col("prediction")
+        actual = F.expm1("label") if log_target else F.col("label")
+        stats = scored.select(((actual - pred) ** 2).alias("se"), actual.alias("y")).agg(
+            F.mean("se").alias("mse"), F.variance("y").alias("var")).first()
+        result.update({"r2": round(1 - stats["mse"] / stats["var"], 4) if stats["var"] else None,
+                       "rmse": round(float(stats["mse"]) ** 0.5, 4)})
+    result["elapsed_s"] = round(time.time() - started, 1)
+    return result

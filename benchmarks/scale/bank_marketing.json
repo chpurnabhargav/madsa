@@ -1,0 +1,32 @@
+{
+  "dataset": "bank_marketing",
+  "target": "subscribed",
+  "expected_target": "subscribed",
+  "target_correct": true,
+  "engine": "pandas",
+  "elapsed_s": 278.6,
+  "status": "ok",
+  "rows_total": 45211,
+  "rows_modelled": 45211,
+  "task": "classification",
+  "best_model": "LightGBM",
+  "tuned": false,
+  "scores": {
+    "accuracy": 0.91,
+    "accuracy_std": 0.002,
+    "f1_macro": 0.7587,
+    "f1_macro_std": 0.0058,
+    "precision_macro": 0.7922,
+    "precision_macro_std": 0.006,
+    "recall_macro": 0.7343,
+    "recall_macro_std": 0.0063,
+    "roc_auc": 0.9376,
+    "roc_auc_std": 0.0035
+  },
+  "baseline_score": 0.4953,
+  "lift_over_baseline": 0.2634,
+  "p_value": 0.0196,
+  "beats_baseline": true,
+  "suspected_leakage": false,
+  "n_models_compared": 10
+}

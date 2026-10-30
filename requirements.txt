@@ -5,6 +5,12 @@ scikit-learn>=1.5
 scipy>=1.13
 statsmodels>=0.14        # variance inflation factors in the multivariate stage
 
+# Gradient-boosting candidates used in the comparison with published systems.
+# Wrapped with ImportError guards, so a machine without them still runs the
+# scikit-learn families end to end.
+xgboost>=2.1
+lightgbm>=4.5
+
 # Visualization
 plotly>=5.22
 kaleido>=0.2.1           # static image export for the report; no direct import

@@ -1296,6 +1296,11 @@ def _ask(backend: "Backend", agent: str, system: str, user: str,
 
         try:
             parsed = extract_json(response.text)
+            # A single object wrapped in a list is a common slip -- it failed
+            # the multivariate stage three times running on a live provider --
+            # and it carries exactly the object that was asked for.
+            if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+                parsed = parsed[0]
             if not isinstance(parsed, dict):
                 raise LLMError("Expected a JSON object at the top level.")
 

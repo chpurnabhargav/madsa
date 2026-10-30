@@ -1,0 +1,2 @@
+{"dataset": "wine", "target_chosen": "wine_class", "elapsed_s": 39.4, "cv_folds": 5, "selected_model": "Extra Trees", "selected_accuracy": 0.9887, "selected_accuracy_std": 0.0138, "best_candidate": "Extra Trees", "best_candidate_accuracy": 0.9887, "candidates": 10}
+{"dataset": "breast_cancer", "target_chosen": "diagnosis", "elapsed_s": 63.2, "cv_folds": 5, "selected_model": "Stacked Ensemble", "selected_accuracy": 0.9824, "selected_accuracy_std": 0.0111, "best_candidate": "Stacked Ensemble", "best_candidate_accuracy": 0.9824, "candidates": 10}

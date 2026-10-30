@@ -31,6 +31,7 @@ from config import CONFIG, apply_quick_run
 from orchestrator import plain_language as pl
 from orchestrator.export import save_report, to_html, to_markdown
 from orchestrator.graph import CANONICAL_ORDER, run_workflow
+from tools import spark_engine
 
 st.set_page_config(page_title="MADSA · Verified multi-agent analysis",
                    page_icon="📊", layout="wide")
@@ -253,12 +254,17 @@ def rail(state: Any = None, live: bool = False) -> str:
             f'<div class="layer">{foot}</div></div>')
 
 
-def dataset_strip(df: pd.DataFrame, name: str) -> str:
+def dataset_strip(df: pd.DataFrame, name: str, engine: dict | None = None) -> str:
     try:
         duplicates = f"{int(df.duplicated().sum()):,}"
     except TypeError:  # cells holding lists or dicts cannot be compared
         duplicates = "—"
-    facts = [("Rows", f"{df.shape[0]:,}"), ("Columns", f"{df.shape[1]:,}"),
+    rows = f"{df.shape[0]:,}"
+    if (engine or {}).get("full_rows"):
+        # The frame on screen is the bounded sample; say so, and how large the
+        # file really is, rather than presenting the sample as the dataset.
+        rows = f"{engine['full_rows']:,} (Spark; {df.shape[0]:,}-row sample in memory)"
+    facts = [("Rows", rows), ("Columns", f"{df.shape[1]:,}"),
              ("Missing cells", f"{int(df.isna().sum().sum()):,}"),
              ("Duplicate rows", duplicates)]
     return ('<div class="dataset"><div class="file"><span class="k">Dataset</span>'
@@ -411,6 +417,25 @@ def fingerprint(df: pd.DataFrame, name: str) -> str:
     return f"{name}|{df.shape[0]}x{df.shape[1]}|{digest}"
 
 
+@st.cache_resource(show_spinner="Loading the dataset...")
+def load_included(path: str) -> tuple[pd.DataFrame, Any, dict[str, Any]]:
+    """An included dataset, read by the engine its size calls for.
+
+    The same decision `run.py` makes. Reading Covertype's 581,012 rows straight
+    into pandas would skip the distributed path the framework exists to
+    demonstrate: profiling, quality and EDA run on Spark across every row, and
+    the in-memory stages read a bounded sample. Cached, so a rerun of the page
+    does not reload it; the run receives a copy.
+    """
+    engine = spark_engine.choose_engine(path)
+    if engine["engine"] == "spark":
+        sdf = spark_engine.load(path)
+        # Counted once here, not on every redraw of the page.
+        engine = {**engine, "full_rows": sdf.count()}
+        return spark_engine.to_pandas_sample(sdf, CONFIG.spark_collect_rows), sdf, engine
+    return pd.read_csv(path), None, engine
+
+
 def read_upload(uploaded: Any) -> pd.DataFrame:
     name = uploaded.name.lower()
     if name.endswith((".csv", ".txt")):
@@ -486,7 +511,7 @@ with st.sidebar:
 
 # -- Load ----------------------------------------------------------------------
 
-df, dataset_name = None, None
+df, dataset_name, spark_df, engine = None, None, None, None
 if uploaded is not None:
     try:
         df, dataset_name = read_upload(uploaded), uploaded.name
@@ -494,7 +519,8 @@ if uploaded is not None:
         st.error(f"That file could not be read ({type(exc).__name__}: {exc}). "
                  f"Check that it is a CSV, Excel or Parquet file with a header row.")
 elif sample_choice and sample_choice != "—":
-    df, dataset_name = pd.read_csv(DATASETS / sample_choice), sample_choice
+    df, spark_df, engine = load_included(str(DATASETS / sample_choice))
+    dataset_name = sample_choice
 
 state = st.session_state.get("state")
 state_key = st.session_state.get("state_key")
@@ -526,7 +552,7 @@ if df is not None:
         # agent finishes rather than stacking a second one beneath it.
         rail_slot = st.empty()
         rail_slot.markdown(rail(), unsafe_allow_html=True)
-    show(dataset_strip(df, dataset_name))
+    show(dataset_strip(df, dataset_name, engine))
     with st.expander("Preview the first 50 rows"):
         st.dataframe(df.head(50), use_container_width=True)
     if stale:
@@ -548,8 +574,9 @@ if df is not None:
 
         with st.spinner("The agents are working. The rail above updates as each finishes."):
             try:
-                result = run_workflow(df, dataset_name,
+                result = run_workflow(df.copy(), dataset_name,
                                       user_goal=(goal or "").strip() or None,
+                                      spark_df=spark_df, engine=engine,
                                       on_progress=redraw)
             except Exception as exc:
                 st.error(f"The workflow stopped with an error: {type(exc).__name__}: {exc}")
@@ -591,6 +618,17 @@ elif verdict == "needs_revision":
                  "An automated reviewer checked every claim against the "
                  "calculations and listed what it could not reconcile. They are "
                  "points to confirm, not necessarily errors.", "warn"))
+
+if (check := modelling.get("distributed_validation") or {}).get("status") == "ok":
+    score = (f"accuracy {check['accuracy']} and macro F1 {check['f1_macro']}"
+             if "accuracy" in check else f"R² {check['r2']}")
+    show(callout(
+        "Checked on the full dataset with Apache Spark",
+        f"The model was chosen on a {len(state.data):,}-row sample. Spark MLlib then "
+        f"retrained the same family ({check['mllib_model']}) on {check['rows_train']:,} "
+        f"rows and scored {score} on {check['rows_test']:,} rows it had not seen. "
+        f"MLlib's trees are depth-limited to fit this machine, so treat that as a "
+        f"floor rather than a second estimate."))
 
 show(rail(state))
 
@@ -671,23 +709,9 @@ with tabs[3]:
     if timings:
         st.dataframe(pd.DataFrame(timings), use_container_width=True, hide_index=True)
 
-    with st.expander("Cost and execution trace"):
-        if usage := state.usage:
-            show('<div class="readouts">'
-                 + readout("Model calls", f"{usage.get('calls', 0):,}")
-                 + readout("Tokens", f"{usage.get('total_tokens', 0):,}")
-                 + readout("Model time", f"{usage.get('latency_s', 0):.1f}s")
-                 + readout("Replayed from cache", f"{usage.get('cache_hits', 0):,}")
-                 + "</div>")
-            if providers := usage.get("by_provider"):
-                st.caption("Interpretation written by: " + ", ".join(
-                    f"{name} ({_plural(count, 'call')})"
-                    for name, count in providers.items()))
-            if rows := [{"agent": k, **v} for k, v in usage.get("by_agent", {}).items()]:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        st.caption("Execution trace")
-        st.dataframe(pd.DataFrame(state.trace), use_container_width=True,
-                     height=280, hide_index=True)
+    if providers := (state.usage or {}).get("by_provider"):
+        st.caption("Interpretation written by: " + ", ".join(
+            f"{name} ({_plural(count, 'call')})" for name, count in providers.items()))
 
 # -- Agents ----------------------------------------------------------------------
 with tabs[4]:

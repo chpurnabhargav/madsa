@@ -147,6 +147,24 @@ class TestTools:
         assert candidates and candidates[0]["column"] == "Survived"
         assert candidates[0]["task"] == "classification"
 
+    def test_a_target_named_in_the_goal_ranks_first(self, titanic):
+        """The person asking has said what the target is; a heuristic must not overrule them."""
+        candidates = suggest_targets(profile_dataset(titanic), "Predict which port, Embarked")
+        assert candidates[0]["column"] == "Embarked"
+        assert candidates[0]["named_in_goal"] is True
+
+    def test_one_hot_levels_and_constants_are_never_targets(self):
+        """Covertype once modelled Wilderness_Area_0 -- fixed by its siblings -- at accuracy 1.00."""
+        rng = np.random.default_rng(0)
+        area = rng.integers(0, 4, 400)
+        df = pd.DataFrame({f"Wilderness_Area_{i}": (area == i).astype(int) for i in range(4)})
+        df["Elevation"] = rng.normal(2800, 200, 400)
+        df["constant"] = 1
+        df["Cover_Type"] = rng.integers(1, 8, 400)
+        names = [c["column"] for c in suggest_targets(profile_dataset(df))]
+        assert names[0] == "Cover_Type"
+        assert not any(n.startswith("Wilderness_Area") or n == "constant" for n in names)
+
     def test_quality_scores_severity_by_missingness(self, titanic):
         assessment = assess_quality(titanic, profile_dataset(titanic))
         by_column = {(i["kind"], i["column"]): i for i in assessment["issues"]}
@@ -287,6 +305,75 @@ class TestModellingAgentOverride:
         assert output.findings["recommended_model"] is None
         assert any("contradicts the measurements" in w for w in output.warnings)
         assert any("not present in the data" in w for w in output.warnings)
+
+
+class TestSuspectedLeakage:
+    """A near-perfect cross-validated score is flagged, not reported as skill."""
+
+    def test_a_target_copied_into_the_inputs_is_flagged(self):
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=400)
+        df = pd.DataFrame({"x": x, "noise": rng.normal(size=400),
+                           "label": np.where(x > 0, "yes", "no")})
+        output = ModellingAgent().run(profiled(df))
+        assert output.findings["suspected_leakage"] is True
+        assert any("Near-perfect" in w for w in output.warnings)
+
+    def test_an_ordinary_score_is_not_flagged(self, titanic):
+        output = ModellingAgent().run(profiled(titanic))
+        assert output.findings["suspected_leakage"] is False
+
+
+class TestLiveRunFindings:
+    """Two defects a live-provider run exposed, which the mock never produced."""
+
+    def test_a_single_object_wrapped_in_a_list_is_accepted(self, mock):
+        mock.register("multivariate", lambda _: [{"narrative": "ok"}])
+        assert ask_json("multivariate", "s", "u", required_keys=("narrative",)) == {
+            "narrative": "ok"}
+
+    def test_a_fence_beyond_the_observed_range_clips_nothing_on_that_side(self):
+        """An IQR fence of -6.69 for Age was reported, though no age is near it."""
+        ages = pd.DataFrame({"Age": [0.42, 2, 20, 24, 28, 30, 35, 38, 45, 80]})
+        out, log = apply_cleaning(ages, [{"action": "clip_outliers", "column": "Age"}])
+        assert log[0]["lower"] is None and log[0]["upper"] is not None
+        assert "below" not in log[0]["detail"]
+        assert out["Age"].min() == 0.42 and out["Age"].max() < 80
+
+
+class TestDistributedValidation:
+    """On a Spark run the selected family is retrained on every row with MLlib."""
+
+    def test_full_data_scores_are_produced_for_both_tasks(self, tmp_path):
+        from tools import spark_engine
+
+        ok, _ = spark_engine.spark_available()
+        if not ok:
+            pytest.skip("Spark is not available in this environment")
+        rng = np.random.default_rng(3)
+        x = rng.normal(size=2000)
+        df = pd.DataFrame({"x": x, "g": rng.choice(["a", "b"], 2000),
+                           "label": np.where(x + rng.normal(0, 0.3, 2000) > 0, "yes", "no"),
+                           # A boolean target, as MiniBooNE's `signal` is.
+                           "flag": x + rng.normal(0, 0.3, 2000) > 0,
+                           "value": 3 * x + rng.normal(0, 0.5, 2000)})
+        path = tmp_path / "d.csv"
+        df.to_csv(path, index=False)
+        try:
+            sdf = spark_engine.load(str(path))
+            cls = spark_engine.distributed_validation(sdf, "label", ["x", "g"],
+                                                      "classification", "Random Forest")
+            reg = spark_engine.distributed_validation(sdf, "value", ["x", "g"],
+                                                      "regression", "Ridge Regression")
+            flag = spark_engine.distributed_validation(sdf, "flag", ["x", "g"],
+                                                       "classification", "LightGBM")
+        finally:
+            spark_engine.stop_session()
+        assert cls["status"] == "ok" and cls["accuracy"] > 0.8
+        assert cls["rows_train"] + cls["rows_test"] == 2000
+        assert reg["status"] == "ok" and reg["r2"] > 0.9
+        assert reg["mllib_model"] == "LinearRegression"
+        assert flag["status"] == "ok" and flag["mllib_model"] == "GBTClassifier"
 
 
 class TestReportAgentNumberVerification:
@@ -946,6 +1033,21 @@ class TestInterfaceRenders:
         app.run()
 
         assert not app.exception, [e.value for e in app.exception]
+
+    def test_a_failed_permutation_test_is_reported_not_hidden(self, titanic, monkeypatch):
+        import tools.modelling as modelling
+
+        def boom(*args, **kwargs):
+            raise MemoryError("simulated")
+
+        monkeypatch.setattr(CONFIG, "stacking_max_rows", 0)
+        monkeypatch.setattr(CONFIG, "tune_models", False)
+        monkeypatch.setattr(modelling, "permutation_test_score", boom)
+        df = titanic[["Survived", "Pclass", "Sex", "Fare"]].dropna()
+        result = modelling.evaluate_models(df, "Survived", ["Pclass", "Sex", "Fare"],
+                                           "classification")
+        assert result["permutation_test"] is None
+        assert result["permutation_test_error"].startswith("MemoryError")
 
     def test_every_result_tab_renders(self, titanic, monkeypatch, tmp_path):
         """The tabs only exist once a run has produced state.
@@ -2315,6 +2417,28 @@ class TestModelSelection:
         best, _ = _select_best(results, "r2", "regression")
         assert best["model"] == "Steady"
 
+    def test_fold_spread_does_not_tie_a_clearly_worse_model(self):
+        """The tolerance is a standard error, not a fold standard deviation.
+
+        Kaggle House Prices, 5-fold CV: one fold holds the known outlier houses
+        and R-squared varies by 0.12 across folds. Under a one-sd tolerance a
+        Decision Tree 11.5 points behind the leader counted as tied, and won
+        on its lower variance.
+        """
+        from tools.modelling import _select_best
+
+        def reg(model, r2, std):
+            return {"model": model, "status": "ok", "is_baseline": False,
+                    "primary_metric": "r2", "primary_score": r2,
+                    "scores": {"r2": r2, "r2_std": std}}
+
+        results = [reg("Gradient Boosting", 0.8530, 0.1165),
+                   reg("LightGBM", 0.8485, 0.0867),
+                   reg("Decision Tree", 0.7378, 0.0697)]
+        best, selection = _select_best(results, "r2", "regression", folds=5)
+        assert best["model"] != "Decision Tree"
+        assert "Decision Tree" not in selection["tied_within_1_se"]
+
     def test_the_selection_rule_is_recorded_for_the_reader(self):
         """A changed pick must be explainable, not an unexplained model name."""
         from tools.modelling import _select_best
@@ -2325,7 +2449,47 @@ class TestModelSelection:
         ]
         _, selection = _select_best(results, "f1_macro", "classification")
         assert "accuracy" in selection["rule"]
-        assert set(selection["tied_within_1_std"]) == {"Decision Tree", "Extra Trees"}
+        assert set(selection["tied_within_1_se"]) == {"Decision Tree", "Extra Trees"}
+
+
+class TestLogTargetCandidates:
+    """Log-scale regressors are offered for positive, right-skewed targets.
+
+    A price-like target spans orders of magnitude, and its errors are
+    proportional rather than additive. Fitting on log1p and inverting with
+    expm1 matches that. The variants are added to the field and must win on
+    cross-validation like any other candidate; they never replace the raw ones.
+    """
+
+    def test_warranted_only_for_positive_skewed_regression(self):
+        from tools.modelling import _log_target_warranted
+
+        rng = np.random.default_rng(0)
+        skewed = pd.Series(rng.lognormal(12, 0.6, 500))
+        assert _log_target_warranted(skewed, "regression")
+        assert not _log_target_warranted(skewed, "classification")
+        assert not _log_target_warranted(pd.Series(rng.normal(0, 1, 500)), "regression")
+        assert not _log_target_warranted(skewed - skewed.median(), "regression")
+
+    def test_variants_are_added_not_substituted(self):
+        from tools.modelling import _candidate_models
+
+        plain = _candidate_models("regression", 1000)
+        logged = _candidate_models("regression", 1000, log_target=True)
+        assert set(plain) < set(logged)
+        added = set(logged) - set(plain)
+        assert added and all(name.endswith("(log target)") for name in added)
+
+    def test_a_log_target_model_predicts_on_the_original_scale(self):
+        from tools.modelling import _candidate_models
+
+        rng = np.random.default_rng(1)
+        X = rng.normal(size=(300, 3))
+        y = np.exp(11 + X[:, 0] * 0.5 + rng.normal(0, 0.1, 300))
+        model = _candidate_models("regression", 300, log_target=True)[
+            "Ridge Regression (log target)"]
+        pred = model.fit(X, y).predict(X)
+        assert 0.5 < np.median(pred) / np.median(y) < 2.0
 
 
 class TestVerificationLayer:

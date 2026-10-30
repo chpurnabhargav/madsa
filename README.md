@@ -294,6 +294,17 @@ check forced back on — invented figures, causal wording, a buried null result,
 model recommended despite no signal — and is the figure the two arms are
 compared on.
 
+**Benchmarks**
+
+```bash
+python datasets/fetch_benchmark_data.py      # downloads the larger datasets once
+python -m evaluation.benchmark_comparison    # head-to-head with published agents
+python -m evaluation.benchmark               # the full workflow at scale
+```
+
+Both resume where they stopped and write to `benchmarks/`, which is committed.
+See [Benchmarks against published systems](#benchmarks-against-published-systems).
+
 **Tests**
 
 ```bash
@@ -324,6 +335,32 @@ Five dimensions are reported:
   with the dataset.
 - **Cost**, in model calls, tokens and time per stage.
 
+## Benchmarks against published systems
+
+Two surveyed papers report per-dataset results on datasets used here, so the
+framework was re-run under each paper's own protocol (figures checked against
+the papers' tables). Data Interpreter (Hong et al., ACL Findings 2025, Table 6)
+— 80/20 hold-out, ours the mean of five random splits:
+
+| Dataset | AutoGen | OpenInterpreter | TaskWeaver | XAgent | OpenDevin | Data Interpreter | **Ours** (mean ± sd, 5 splits) |
+|---|---|---|---|---|---|---|---|
+| Wine recognition | 1.00 | 1.00 | 1.00 | 1.00 | 0.96 | 0.96 | **0.994 ± 0.012** |
+| Breast cancer Wisconsin | 0.97 | 0.96 | 0.96 | 0.94 | 0.96 | 0.99 | **0.977 ± 0.010** |
+| Titanic | 0.82 | 0.81 | 0.43 | 0.00 | 0.81 | 0.82 | **0.847 ± 0.029** |
+| House prices (1/(1+RMSLE)) | 0.88 | 0.87 | 0.49 | 0.00 | 0.87 | 0.91 | **0.880 ± 0.007** |
+| **Average of the four** | 0.917 | 0.910 | 0.720 | 0.485 | 0.900 | 0.920 | **0.925** |
+
+LAMBDA (Sun et al., 2025, Table 2) — 5-fold cross-validation:
+
+| Dataset | LAMBDA (best of 9 models) | **Ours** (model the framework selected) |
+|---|---|---|
+| Breast cancer Wisconsin | 0.9807 | **0.9824 ± 0.0111** (stacked ensemble) |
+| Wine recognition | 0.9889 | **0.9887 ± 0.0138** (extra trees) — a tie: about 2 of 178 wrong in each |
+
+Behind Data Interpreter on Breast Cancer and House Prices, ahead on Titanic and
+on the four-dataset average. Full tables, per-split values and what is not
+controlled: [`benchmarks/head_to_head.md`](benchmarks/head_to_head.md).
+
 ## Project layout
 
 ```
@@ -352,13 +389,19 @@ madsa/
 ├── orchestrator/
 │   ├── graph.py           planning, the LangGraph state machine, revision
 │   └── export.py          Markdown, HTML and JSON output
-├── evaluation/harness.py  fault injection, metrics, evaluation report
+├── evaluation/
+│   ├── harness.py         fault injection, metrics, evaluation report
+│   ├── benchmark_comparison.py  head-to-head with published agents
+│   ├── benchmark.py       the full workflow on the large datasets
+│   └── agent_matrix.py    what each agent yielded, dataset by dataset
+├── benchmarks/            measured benchmark results (committed)
 ├── models/                fitted pipelines, each with a signature
 ├── reports/               generated reports
 ├── runs/                  full run records and evaluation sweeps
 └── tests/
     ├── conftest.py        cheap defaults so the suite stays fast enough to run
-    └── test_framework.py  164 tests, all on the mock backend
+    ├── test_framework.py  framework behaviour, on the mock backend
+    └── test_hardening.py  edge cases and failure paths
 ```
 
 ## Scale, and its limits
@@ -369,18 +412,24 @@ reading it: pandas below a threshold, Apache Spark above. On a 3,000,000-row,
 needed **641 MB**, and profiled every row where pandas had to fall back to a
 100,000-row sample carrying up to **1.0%** sampling error.
 
-**Two of the nine stages are distributed:** profiling, and the correlation
-matrix in exploratory analysis. Quality assessment, feature engineering,
-multivariate analysis and model fitting run in memory on a bounded sample.
+**What runs on Spark:** profiling and the correlation matrix, computed exactly
+across every row, and a **full-data validation of the selected model**: its
+family is retrained with Spark MLlib on a random 80% of *all* rows and scored on
+the other 20% (Covertype: 465,120 training rows, 43 s on a laptop). Quality
+assessment, feature engineering, multivariate analysis and the delivered model
+run in memory on a bounded sample.
 
 That boundary is deliberate and worth stating rather than glossing. Profiling
 and correlation are aggregations, which Spark computes exactly across every row
 — verified identical to pandas on all fifteen columns of a 32,561-row dataset,
 and to six decimal places on both Pearson and Spearman across seventeen
-correlation pairs. Model fitting is not an aggregation. Distributing it would
-mean swapping scikit-learn for Spark MLlib, a narrower set of algorithms, and
-would make results depend on which engine ran — which is precisely the property
-that makes automatic engine selection safe.
+correlation pairs. Model fitting is not an aggregation. The delivered model and
+its reported scores stay scikit-learn's, so a result never depends on which
+engine ran — the property that makes automatic engine selection safe. The
+MLlib run confirms at full scale rather than replacing: MLlib has a narrower set
+of algorithms (no extra-trees, stacking or RBF SVM, which are represented by a
+random forest), and its trees are depth-limited to fit one machine's memory, so
+its score is a lower bound for the family.
 
 The report says which figures came from the full dataset and which from the
 sample, because that changes how each should be read.

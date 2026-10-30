@@ -224,15 +224,24 @@ def apply_cleaning(df: pd.DataFrame,
                 fence = detect_outliers_iqr(out[col])
                 if fence["lower"] is None:
                     raise ValueError("too few values to compute an IQR fence")
-                out[col] = out[col].clip(fence["lower"], fence["upper"])
+                # A fence beyond the observed range clips nothing on that side,
+                # and reporting it anyway reads as nonsense: an IQR fence of
+                # -6.69 for Age, which no passenger is near. That side is left
+                # unclipped, here and when new rows are replayed.
+                values = out[col].dropna()
+                lower = fence["lower"] if fence["lower"] > values.min() else None
+                upper = fence["upper"] if fence["upper"] < values.max() else None
+                out[col] = out[col].clip(lower, upper)
                 # The fence is recorded, not only described, because a model
                 # fitted on clipped values must see new rows clipped to the
                 # same fence (`replay_cleaning`).
+                sides = [f"below {lower:.4g}" if lower is not None else None,
+                         f"above {upper:.4g}" if upper is not None else None]
                 log.append({"action": kind, "column": col, "status": "applied",
-                            "lower": float(fence["lower"]),
-                            "upper": float(fence["upper"]),
-                            "detail": f"Clipped {col} to "
-                                      f"[{fence['lower']:.4g}, {fence['upper']:.4g}]."})
+                            "lower": lower, "upper": upper,
+                            "detail": f"Clipped {col} values "
+                                      f"{' and '.join(x for x in sides if x) or 'nowhere'} "
+                                      f"to the IQR fence."})
             else:
                 log.append({"action": kind, "column": col, "status": "skipped",
                             "detail": f"Unknown action {kind}."})

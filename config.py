@@ -167,7 +167,9 @@ class FrameworkConfig:
     spark_row_threshold: int = 500_000
     spark_master: str = os.getenv("MADSA_SPARK_MASTER", "local[*]")
     spark_shuffle_partitions: int = 8  # cluster default of 200 is wrong on one machine
-    spark_driver_memory: str = "2g"
+    # 4 GB: MLlib's tree learners collect node statistics on the driver, and
+    # at 2 GB a depth-15 forest over Covertype's 465,000 rows ran out of heap.
+    spark_driver_memory: str = "4g"
 
     # Rows drawn back into memory when a distributed run reaches a stage that
     # cannot be distributed (charting, scikit-learn modelling). The driver never
@@ -179,6 +181,18 @@ class FrameworkConfig:
     # the sample far larger than any dataset the in-memory engine would handle
     # differently, so the statistics it produces are not the weaker ones.
     spark_collect_rows: int = 50_000
+
+    # On a distributed run the selected model's family is also trained on every
+    # row with Spark MLlib and scored on a held-out 20% of the full dataset, so
+    # the report can say whether the sample's result holds at full scale. It
+    # confirms the scikit-learn result; it never replaces it.
+    distributed_validation: bool = True
+    spark_ml_trees: int = 40
+    # Deeper trees fit better but their memory doubles per level; 15 is the
+    # deepest that fits a single machine's driver on Covertype.
+    spark_ml_depth: int = 15
+    # Categoricals with more levels than this are identifiers, not features.
+    spark_ml_max_levels: int = 200
 
     # Significance threshold for that test. It is stricter than the conventional
     # 0.05 because the model being tested was chosen as the best of several

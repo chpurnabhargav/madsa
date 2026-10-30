@@ -388,6 +388,19 @@ def to_markdown(state: WorkflowState, include_appendix: bool = True) -> str:
                 f"{state.full_row_count:,} rows. Charting and model evaluation ran "
                 f"on an in-memory sample of {len(state.data):,} rows, so model "
                 f"scores describe the sample rather than every row.\n")
+            check = state.findings("modelling").get("distributed_validation") or {}
+            if check.get("status") == "ok":
+                score = (f"accuracy {check['accuracy']}, macro F1 {check['f1_macro']}"
+                         if "accuracy" in check else f"R² {check['r2']}, RMSE {check['rmse']}")
+                lines.append(
+                    f"**Full-data validation (Spark MLlib):** the selected family, "
+                    f"{check['selected_model']}, was represented by MLlib's "
+                    f"{check['mllib_model']}, trained across the cluster on "
+                    f"{check['rows_train']:,} rows and scored on {check['rows_test']:,} "
+                    f"held-out rows of the full dataset: {score}. MLlib's tree learners "
+                    f"are depth-limited to fit one machine's memory, so this is a lower "
+                    f"bound for the family at full scale, not a replacement for the "
+                    f"scores above.\n")
         else:
             lines.append(f"**Execution engine:** pandas, in-memory. "
                          f"{state.engine_reason}\n")

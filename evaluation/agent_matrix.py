@@ -1,5 +1,7 @@
 """Per-agent health across every real dataset.
 
+    python -m evaluation.agent_matrix
+
 Running the pipeline and seeing "sound" at the end says the workflow finished.
 It does not say each of the nine agents did useful work: a stage can return
 `ok` having produced almost nothing, and the run still completes. This checks
@@ -13,7 +15,8 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[0]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 
@@ -31,7 +34,7 @@ DATASETS = [
     ("california_housing", "Explain what drives house values across California."),
 ]
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("agent_matrix")
+OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "runs" / "agent_matrix"
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -75,7 +78,7 @@ def main() -> int:
         marker = OUT / f"{name}.json"
         if marker.exists():
             continue
-        path = Path("datasets") / f"{name}.csv"
+        path = ROOT / "datasets" / f"{name}.csv"
         if not path.exists():
             continue
 

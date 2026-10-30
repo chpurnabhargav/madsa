@@ -213,7 +213,7 @@ class ProfilingAgent(Agent):
             )
         else:
             profile = profile_dataset(df)
-        candidates = suggest_targets(profile)
+        candidates = suggest_targets(profile, state.user_goal)
 
         if profile["sampled"]:
             warnings.append(
