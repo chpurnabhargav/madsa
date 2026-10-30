@@ -64,7 +64,9 @@ def titanic() -> pd.DataFrame:
         "Embarked": rng.choice(["S", "C", "Q"], n, p=[0.72, 0.19, 0.09]),
     })
     df.loc[rng.choice(n, 60, replace=False), "Age"] = np.nan       # 20% missing
-    df["Cabin"] = np.nan
+    # Created as an object column: pandas 3 refuses to write text into the
+    # float column an all-NaN assignment would otherwise produce.
+    df["Cabin"] = pd.Series(np.nan, index=df.index, dtype=object)
     df.loc[rng.choice(n, 40, replace=False), "Cabin"] = "C85"      # 87% missing
     return df
 
