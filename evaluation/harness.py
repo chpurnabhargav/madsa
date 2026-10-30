@@ -62,7 +62,7 @@ def inject_faults(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, list[
 
     numeric = [c for c in out.columns if pd.api.types.is_numeric_dtype(out[c])]
     categorical = [c for c in out.columns
-                   if out[c].dtype == object and out[c].nunique() <= 20]
+                   if pd.api.types.is_string_dtype(out[c].dtype) and out[c].nunique() <= 20]
 
     # Missing values at a level that requires imputation.
     if numeric:

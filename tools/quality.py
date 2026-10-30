@@ -108,10 +108,15 @@ def assess_quality(df: pd.DataFrame, profile: dict[str, Any]) -> dict[str, Any]:
                            f"Strongly skewed (skewness {skew:.2f}); a log or power "
                            "transform may help linear models.", skewness=skew))
 
+        # Text columns are `object` under pandas 2 but a dedicated `str` dtype
+        # under pandas 3, which does not compare equal to `object`; testing the
+        # dtype family covers both.
+        is_text = pd.api.types.is_string_dtype(s.dtype)
+
         # Numbers stored as text prevent any numeric analysis. Identifier-typed
         # columns are included: a near-unique column of numeric strings is still
         # stored in the wrong type.
-        if sem in ("categorical", "text", "identifier") and s.dtype == object:
+        if sem in ("categorical", "text", "identifier") and is_text:
             values = s.dropna().astype(str).str.strip()
             # Placeholders written by an exporter are missing values, not
             # evidence that the column holds non-numeric content, so they are
@@ -132,7 +137,7 @@ def assess_quality(df: pd.DataFrame, profile: dict[str, Any]) -> dict[str, Any]:
                            f"analysis.{placeholder_note}"))
 
         # Whitespace/case variants inflate category counts.
-        if sem == "categorical" and s.dtype == object:
+        if sem == "categorical" and is_text:
             norm = s.dropna().astype(str).str.strip().str.lower()
             if norm.nunique() < s.dropna().nunique():
                 issues.append(
