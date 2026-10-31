@@ -64,7 +64,9 @@ def titanic() -> pd.DataFrame:
         "Embarked": rng.choice(["S", "C", "Q"], n, p=[0.72, 0.19, 0.09]),
     })
     df.loc[rng.choice(n, 60, replace=False), "Age"] = np.nan       # 20% missing
-    df["Cabin"] = np.nan
+    # Created as an object column: pandas 3 refuses to write text into the
+    # float column an all-NaN assignment would otherwise produce.
+    df["Cabin"] = pd.Series(np.nan, index=df.index, dtype=object)
     df.loc[rng.choice(n, 40, replace=False), "Cabin"] = "C85"      # 87% missing
     return df
 
@@ -170,6 +172,23 @@ class TestTools:
         by_column = {(i["kind"], i["column"]): i for i in assessment["issues"]}
         assert by_column[("missing_values", "Cabin")]["severity"] == "critical"
         assert by_column[("missing_values", "Age")]["severity"] == "warning"
+
+    @pytest.mark.parametrize("text_dtype", [object, "str"])
+    def test_text_checks_run_on_every_text_dtype(self, text_dtype):
+        # pandas 3 reads text into a `str` dtype rather than `object`; a check
+        # that tests for `object` alone silently skips every column read from a
+        # file.
+        n = 200
+        df = pd.DataFrame({
+            "sex": pd.Series([["male", "Male", " male", "female"][i % 4] for i in range(n)],
+                             dtype=text_dtype),
+            "score": pd.Series([str(i * 1.5) for i in range(n)], dtype=text_dtype),
+            "y": [i % 2 for i in range(n)],
+        })
+        kinds = {(i["kind"], i["column"])
+                 for i in assess_quality(df, profile_dataset(df))["issues"]}
+        assert ("inconsistent_categories", "sex") in kinds
+        assert ("numeric_stored_as_text", "score") in kinds
 
     def test_cleaning_logs_a_failure_rather_than_raising(self, titanic):
         _, log = apply_cleaning(titanic, [{"action": "impute_median", "column": "Ghost"}])
